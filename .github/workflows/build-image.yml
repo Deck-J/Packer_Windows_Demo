@@ -1,0 +1,161 @@
+name: Build Windows golden image
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "**.tf"
+      - "**.hcl"
+      - "app/**"
+      - "scripts/**"
+      - ".github/workflows/build-image.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: windows-golden-image
+  cancel-in-progress: false
+
+env:
+  TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+  TF_VAR_github_repository: ${{ github.repository }}
+  TF_VAR_terraform_executor_service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  TF_VAR_region: us-central1
+  TF_VAR_zone: us-central1-a
+  TF_IN_AUTOMATION: true
+
+jobs:
+  build-app:
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Compile and publish application
+        run: dotnet publish app/WorkerDemo.csproj --configuration Release --output publish/WorkerDemo
+
+      - name: Package application
+        shell: pwsh
+        run: Compress-Archive -Path publish/WorkerDemo/* -DestinationPath worker-demo.zip
+
+      - name: Upload compiled application
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-demo
+          path: worker-demo.zip
+
+  build-image:
+    needs: build-app
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: 1.11.2
+
+      - name: Download compiled application
+        uses: actions/download-artifact@v4
+        with:
+          name: worker-demo
+
+      - name: Initialize Terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=packer-windows-demo"
+
+      - name: Validate and apply Terraform
+        run: |
+          terraform fmt -check
+          terraform validate
+          terraform apply -auto-approve
+
+      - name: Read WinRM password from Secret Manager
+        shell: bash
+        run: |
+          winrm_password="$(gcloud secrets versions access latest \
+            --secret="$(terraform output -raw winrm_secret_id)" \
+            --project="$TF_VAR_project_id")"
+          echo "::add-mask::$winrm_password"
+          echo "PKR_VAR_winrm_password=$winrm_password" >> "$GITHUB_ENV"
+
+      - name: Initialize and validate Packer
+        run: |
+          export PKR_VAR_project_id="$TF_VAR_project_id"
+          export PKR_VAR_zone="$TF_VAR_zone"
+          export PKR_VAR_network="$(terraform output -raw build_network)"
+          export PKR_VAR_subnetwork="$(terraform output -raw build_subnetwork)"
+          export PKR_VAR_builder_service_account="$(terraform output -raw builder_service_account)"
+          packer init .
+          packer fmt -check .
+          packer validate .
+
+      - name: Build and self-test golden image
+        run: |
+          export PKR_VAR_project_id="$TF_VAR_project_id"
+          export PKR_VAR_zone="$TF_VAR_zone"
+          export PKR_VAR_network="$(terraform output -raw build_network)"
+          export PKR_VAR_subnetwork="$(terraform output -raw build_subnetwork)"
+          export PKR_VAR_builder_service_account="$(terraform output -raw builder_service_account)"
+          packer build .
+
+      - name: Publish compiled application to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "demo-${{ github.run_id }}"
+          name: "Windows worker demo ${{ github.run_id }}"
+          prerelease: true
+          generate_release_notes: false
+          files: worker-demo.zip
+
+      - name: Deploy separate worker VM
+        shell: bash
+        env:
+          RELEASE_URL: "https://github.com/${{ github.repository }}/releases/download/demo-${{ github.run_id }}/worker-demo.zip"
+        run: |
+          image_name="$(jq -r '.builds[0].artifact_id' packer-manifest.json | cut -d: -f2)"
+          terraform apply -auto-approve \
+            -var="golden_image=$image_name" \
+            -var="app_release_url=$RELEASE_URL"
+
+      - name: Verify deployed application
+        shell: bash
+        run: |
+          worker_ip="$(terraform output -raw worker_public_ip)"
+          for attempt in {1..30}; do
+            if curl --fail --silent "http://$worker_ip:8080/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Worker application did not become healthy"
+          exit 1

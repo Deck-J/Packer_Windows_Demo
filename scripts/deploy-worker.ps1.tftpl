@@ -1,0 +1,25 @@
+$ErrorActionPreference = "Stop"
+
+$releaseUrl = "${release_url}"
+$installDir = "C:\WorkerDemo"
+$archivePath = "C:\WorkerDemo.zip"
+$logPath = "C:\WorkerDemo-startup.log"
+
+New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+Invoke-WebRequest -Uri $releaseUrl -OutFile $archivePath
+Expand-Archive -Path $archivePath -DestinationPath $installDir -Force
+Remove-Item $archivePath -Force
+
+Import-Module WebAdministration
+Start-Service -Name W3SVC
+
+$stdout = [System.IO.Path]::ChangeExtension($logPath, ".out.log")
+$stderr = [System.IO.Path]::ChangeExtension($logPath, ".err.log")
+Start-Process -FilePath "C:\Program Files\dotnet\dotnet.exe" `
+  -ArgumentList "WorkerDemo.dll --urls http://127.0.0.1:8080" `
+  -WorkingDirectory $installDir `
+  -RedirectStandardOutput $stdout `
+  -RedirectStandardError $stderr `
+  -WindowStyle Hidden
+
+Set-Content -Path $logPath -Value "WorkerDemo deployed from $releaseUrl"
