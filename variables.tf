@@ -49,3 +49,10 @@ variable "app_release_url" {
   default     = ""
 }
 
+variable "worker_ssh_public_key" {
+  description = "Demo SSH public key installed on the worker VM for point-to-point provisioning."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+

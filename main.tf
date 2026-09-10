@@ -41,6 +41,19 @@ resource "google_compute_firewall" "iap_winrm" {
   target_tags   = ["packer-windows-builder"]
 }
 
+resource "google_compute_firewall" "iap_ssh" {
+  name    = "${var.network_name}-iap-ssh"
+  network = google_compute_network.build.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["35.235.240.0/20"]
+  target_tags   = ["packer-windows-builder", "windows-demo-worker"]
+}
+
 resource "google_compute_firewall" "worker_http" {
   count   = var.golden_image != "" && var.app_release_url != "" ? 1 : 0
   name    = "${var.network_name}-worker-http"
@@ -79,7 +92,8 @@ resource "google_compute_instance" "worker" {
 
   metadata = {
     windows-startup-script-ps1 = templatefile("${path.module}/scripts/deploy-worker.ps1.tftpl", {
-      release_url = var.app_release_url
+      release_url    = var.app_release_url
+      ssh_public_key = var.worker_ssh_public_key
     })
   }
 
@@ -109,6 +123,12 @@ resource "google_project_iam_member" "builder_iap" {
   project = var.project_id
   role    = "roles/iap.tunnelResourceAccessor"
   member  = "serviceAccount:${google_service_account.builder.email}"
+}
+
+resource "google_project_iam_member" "terraform_executor_iap" {
+  project = var.project_id
+  role    = "roles/iap.tunnelResourceAccessor"
+  member  = "serviceAccount:${var.terraform_executor_service_account}"
 }
 
 resource "google_project_iam_member" "builder_image_admin" {

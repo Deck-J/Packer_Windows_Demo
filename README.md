@@ -1,6 +1,6 @@
 # Windows Server 2022 Golden Image
 
-This repository builds a Windows Server 2022 image on Google Cloud with Terraform and Packer, then compiles and deploys a small .NET application to a separate worker VM. Terraform creates the VPC, IAP firewall for WinRM, builder service account, GitHub Actions Workload Identity Federation, Google Secret Manager secret, and optional worker VM. Packer creates the image and installs IIS, Visual Studio 2022 Build Tools, MSBuild, .NET 8, and GitHub Actions runner binaries.
+This repository builds Windows Server 2022 images on Google Cloud with Terraform and Packer, then compiles and deploys a small .NET application to a separate worker VM. Terraform creates the VPC, IAP firewalls for WinRM and SSH, builder service account, GitHub Actions Workload Identity Federation, Google Secret Manager secret, and optional worker VM. Packer creates both a WinRM-provisioned image and an SSH-provisioned image, and installs IIS, OpenSSH Server, Visual Studio 2022 Build Tools, MSBuild, .NET 8, and GitHub Actions runner binaries.
 
 ## Demo workflow
 
@@ -19,7 +19,7 @@ flowchart TD
 
   subgraph INFRA[Repeatable infrastructure provisioning]
     ROOT[Terraform root stack]
-    VPC[Build VPC, subnet, and IAP WinRM firewall]
+    VPC[Build VPC, subnet, and IAP WinRM/SSH firewalls]
     IAM[Builder service account and IAM]
     WIF[GitHub Workload Identity Federation]
     SECRET[Secret Manager WinRM password]
@@ -30,11 +30,11 @@ flowchart TD
   end
 
   subgraph BUILD[Packer image build]
-    PACKER[Packer Google Compute builder]
-    VM[Temporary Windows Server 2022 VM]
+    PACKER[Packer Google Compute builders]
+    VM[Temporary Windows Server 2022 VMs]
     TOOLS[IIS, Visual Studio Build Tools, MSBuild, .NET 8, GitHub Runner]
     TEST[Image self-tests]
-    PACKER --> VM
+    PACKER -->|WinRM and SSH| VM
     VM --> TOOLS
     TOOLS --> TEST
   end
@@ -81,9 +81,10 @@ Terraform creates one custom-mode VPC named `windows-image-build` with one regio
 | Destination | Port/protocol | Source | Why it is open | Lifecycle |
 | --- | --- | --- | --- | --- |
 | Temporary Packer builder | TCP `5986` | `35.235.240.0/20` | Google Cloud IAP TCP forwarding to HTTPS WinRM | Temporary; builder is shut down and deleted after the image build |
+| Temporary Packer builder and demo worker | TCP `22` | `35.235.240.0/20` | Google Cloud IAP TCP forwarding to OpenSSH | Temporary for builders; worker exists for the demo deployment |
 | Demo worker | TCP `8080` | `0.0.0.0/0` | HTTP access to the sample application's `/health` endpoint | Demo-only; restrict to a trusted CIDR before reuse |
 
-The IAP source range is Google’s documented TCP forwarding range. The builder does not expose WinRM to the public internet. SSH `22`, RDP `3389`, HTTP `80`, and HTTPS `443` ingress rules are not created by this repository.
+The IAP source range is Google’s documented TCP forwarding range. The builder and worker do not expose WinRM or SSH to the public internet. RDP `3389`, HTTP `80`, and HTTPS `443` ingress rules are not created by this repository.
 
 ### Egress and control-plane traffic
 
@@ -100,10 +101,11 @@ The Terraform configuration does not create custom egress-deny rules or Cloud NA
 
 1. GitHub Actions exchanges its OIDC token through Workload Identity Federation and obtains the Terraform executor service account.
 2. Terraform creates the VPC and subnet, then the temporary Packer VM receives the `packer-windows-builder` network tag.
-3. Packer opens an IAP tunnel to the VM and communicates over WinRM TLS on TCP 5986.
+3. Packer opens IAP tunnels to temporary VMs and communicates with one over WinRM TLS on TCP 5986 and one over OpenSSH on TCP 22.
 4. The VM downloads provisioning dependencies over HTTPS, runs self-tests, shuts down, and becomes the golden image.
-5. Terraform creates the separate worker VM from that image. The worker downloads the public GitHub Release asset over HTTPS and runs the application on TCP 8080.
-6. GitHub Actions calls the worker’s public `8080/health` endpoint to verify deployment.
+5. Terraform creates the separate worker VM from the WinRM image and installs OpenSSH with the workflow's temporary public key.
+6. GitHub Actions copies the application package to the worker with `gcloud compute scp` and starts it with `gcloud compute ssh`.
+7. GitHub Actions calls the worker’s public `8080/health` endpoint to verify deployment.
 
 For production, keep the state bucket and Secret Manager private, replace the worker’s `0.0.0.0/0` rule with a trusted source range or load balancer, and use controlled egress rather than broad internet access.
 
@@ -174,5 +176,5 @@ permissions:
     service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 ```
 
-The workflow compiles the application on Windows, uploads the binary as a GitHub Release asset, applies Terraform, reads the WinRM password from Secret Manager, validates Packer, builds the image, runs the Windows self-tests, creates the separate worker VM, and verifies its health. The root stack grants the executor read access to the generated WinRM secret through `terraform_executor_service_account`.
+The workflow compiles the application on Windows, uploads the binary as a GitHub Release asset, generates an ephemeral SSH key pair, applies Terraform, reads the WinRM password from Secret Manager, validates Packer, builds both the WinRM and SSH image variants, runs the Windows self-tests, creates the separate worker VM, transfers the application over SSH, and verifies its health. The root stack grants the executor read access to the generated WinRM secret and IAP tunnel access through `terraform_executor_service_account`.
 # Packer_Windows_Demo

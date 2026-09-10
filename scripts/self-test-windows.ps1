@@ -57,6 +57,12 @@ if ($null -eq $iisService -or $iisService.Status -ne "Running") {
 }
 Write-Output "PASS: IIS service is running"
 
+$sshService = Get-Service -Name sshd -ErrorAction SilentlyContinue
+if ($null -eq $sshService -or $sshService.Status -ne "Running") {
+  throw "Self-test failed: OpenSSH service sshd is not running"
+}
+Write-Output "PASS: OpenSSH service is running"
+
 Assert-Path `
   -Path "C:\BuildTools\MSBuild\Current\Bin\MSBuild.exe" `
   -Description "MSBuild"

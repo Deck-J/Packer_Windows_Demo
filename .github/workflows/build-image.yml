@@ -86,6 +86,17 @@ jobs:
         with:
           version: 1.11.2
 
+      - name: Generate demo SSH key pair
+        shell: bash
+        run: |
+          echo "Generating an ephemeral SSH key pair for builder and worker provisioning"
+          ssh-keygen -t ed25519 -N "" -C "github-actions-demo" -f "$RUNNER_TEMP/demo-ssh-key"
+          chmod 600 "$RUNNER_TEMP/demo-ssh-key"
+          echo "SSH_PRIVATE_KEY_FILE=$RUNNER_TEMP/demo-ssh-key" >> "$GITHUB_ENV"
+          echo "PKR_VAR_ssh_private_key_file=$RUNNER_TEMP/demo-ssh-key" >> "$GITHUB_ENV"
+          echo "PKR_VAR_ssh_public_key=$(cat "$RUNNER_TEMP/demo-ssh-key.pub")" >> "$GITHUB_ENV"
+          echo "TF_VAR_worker_ssh_public_key=$(cat "$RUNNER_TEMP/demo-ssh-key.pub")" >> "$GITHUB_ENV"
+
       - name: Download compiled application
         uses: actions/download-artifact@v4
         with:
@@ -124,18 +135,22 @@ jobs:
           export PKR_VAR_network="$(terraform output -raw build_network)"
           export PKR_VAR_subnetwork="$(terraform output -raw build_subnetwork)"
           export PKR_VAR_builder_service_account="$(terraform output -raw builder_service_account)"
+          export PKR_VAR_ssh_public_key="$PKR_VAR_ssh_public_key"
+          export PKR_VAR_ssh_private_key_file="$PKR_VAR_ssh_private_key_file"
           packer init .
           packer fmt -check .
           packer validate .
 
       - name: Build and self-test golden image
         run: |
-          echo "Building and self-testing the Windows golden image"
+          echo "Building and self-testing Windows golden images over WinRM and SSH"
           export PKR_VAR_project_id="$TF_VAR_project_id"
           export PKR_VAR_zone="$TF_VAR_zone"
           export PKR_VAR_network="$(terraform output -raw build_network)"
           export PKR_VAR_subnetwork="$(terraform output -raw build_subnetwork)"
           export PKR_VAR_builder_service_account="$(terraform output -raw builder_service_account)"
+          export PKR_VAR_ssh_public_key="$PKR_VAR_ssh_public_key"
+          export PKR_VAR_ssh_private_key_file="$PKR_VAR_ssh_private_key_file"
           packer build .
 
       - name: Publish compiled application to GitHub
@@ -153,18 +168,77 @@ jobs:
           RELEASE_URL: "https://github.com/${{ github.repository }}/releases/download/demo-${{ github.run_id }}/worker-demo.zip"
         run: |
           echo "Deploying the separate worker VM from the golden image"
-          image_name="$(jq -r '.builds[0].artifact_id' packer-manifest.json | cut -d: -f2)"
+          image_name="$(jq -r '.builds[] | select(.artifact_id | contains("windows-server-2022-ssh-") | not) | .artifact_id' packer-manifest.json | cut -d: -f2)"
           terraform apply -auto-approve \
             -var="golden_image=$image_name" \
             -var="app_release_url=$RELEASE_URL"
 
+      - name: Transfer application to worker over SSH
+        shell: bash
+        run: |
+          echo "Waiting for the worker OpenSSH service"
+          for attempt in {1..30}; do
+            if gcloud compute ssh "packer@windows-demo-worker" \
+              --project="$TF_VAR_project_id" \
+              --zone="$TF_VAR_zone" \
+              --tunnel-through-iap \
+              --ssh-key-file="$SSH_PRIVATE_KEY_FILE" \
+              --quiet \
+              --command="Write-Output 'SSH is ready'"; then
+              break
+            fi
+            if [[ "$attempt" == "30" ]]; then
+              echo "Worker OpenSSH service did not become available"
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "Copying the worker package to the target server over SSH"
+          gcloud compute scp worker-demo.zip \
+            "packer@windows-demo-worker:C:/WorkerDemo/worker-demo.zip" \
+            --project="$TF_VAR_project_id" \
+            --zone="$TF_VAR_zone" \
+            --tunnel-through-iap \
+            --ssh-key-file="$SSH_PRIVATE_KEY_FILE" \
+            --quiet
+          echo "Copying the reusable post-install verifier to the target server"
+          gcloud compute scp scripts/verify-worker.ps1 \
+            "packer@windows-demo-worker:C:/WorkerDemo/verify-worker.ps1" \
+            --project="$TF_VAR_project_id" \
+            --zone="$TF_VAR_zone" \
+            --tunnel-through-iap \
+            --ssh-key-file="$SSH_PRIVATE_KEY_FILE" \
+            --quiet
+          echo "Provisioning and starting the worker application over SSH"
+          gcloud compute ssh "packer@windows-demo-worker" \
+            --project="$TF_VAR_project_id" \
+            --zone="$TF_VAR_zone" \
+            --tunnel-through-iap \
+            --ssh-key-file="$SSH_PRIVATE_KEY_FILE" \
+            --quiet \
+            --command="powershell.exe -NoProfile -Command \"Expand-Archive -Path 'C:\\WorkerDemo\\worker-demo.zip' -DestinationPath 'C:\\WorkerDemo' -Force; Start-Service W3SVC; Start-Process -FilePath 'C:\\Program Files\\dotnet\\dotnet.exe' -ArgumentList 'WorkerDemo.dll --urls http://127.0.0.1:8080' -WorkingDirectory 'C:\\WorkerDemo' -WindowStyle Hidden\""
+
+      - name: Run post-install checks on worker over SSH
+        shell: bash
+        run: |
+          echo "Checking IIS, OpenSSH, application files, process state, and local HTTP endpoints"
+          gcloud compute ssh "packer@windows-demo-worker" \
+            --project="$TF_VAR_project_id" \
+            --zone="$TF_VAR_zone" \
+            --tunnel-through-iap \
+            --ssh-key-file="$SSH_PRIVATE_KEY_FILE" \
+            --quiet \
+            --command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\WorkerDemo\\verify-worker.ps1 -Port 8080 -InstallDirectory C:\\WorkerDemo -ApplicationName WorkerDemo"
+
       - name: Verify deployed application
         shell: bash
         run: |
-          echo "Waiting for the deployed worker application health check"
+          echo "Checking the worker application through its public endpoint"
           worker_ip="$(terraform output -raw worker_public_ip)"
           for attempt in {1..30}; do
-            if curl --fail --silent "http://$worker_ip:8080/health"; then
+            if curl --fail --silent --show-error "http://$worker_ip:8080/health" | jq -e '.status == "healthy"' >/dev/null && \
+              curl --fail --silent --show-error "http://$worker_ip:8080/" | jq -e '.application == "Windows Worker Demo" and .status == "healthy"' >/dev/null; then
+              echo "PASS: public health and application endpoints are healthy"
               exit 0
             fi
             sleep 10
