@@ -41,12 +41,16 @@ jobs:
 
       - name: Initialize bootstrap Terraform
         working-directory: bootstrap
-        run: terraform init
+        run: |
+          echo "Initializing bootstrap Terraform"
+          terraform init
 
       - name: Create encrypted state bucket
         working-directory: bootstrap
         run: |
+          echo "Checking bootstrap Terraform formatting and configuration"
           terraform fmt -check
           terraform validate
+          echo "Creating the encrypted Terraform state bucket"
           terraform apply -auto-approve \
             -var='state_access_members=["serviceAccount:${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}"]'

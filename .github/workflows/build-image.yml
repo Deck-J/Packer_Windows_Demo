@@ -42,11 +42,15 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Compile and publish application
-        run: dotnet publish app/WorkerDemo.csproj --configuration Release --output publish/WorkerDemo
+        run: |
+          echo "Compiling and publishing the worker application"
+          dotnet publish app/WorkerDemo.csproj --configuration Release --output publish/WorkerDemo
 
       - name: Package application
         shell: pwsh
-        run: Compress-Archive -Path publish/WorkerDemo/* -DestinationPath worker-demo.zip
+        run: |
+          Write-Host "Packaging the published worker application"
+          Compress-Archive -Path publish/WorkerDemo/* -DestinationPath worker-demo.zip
 
       - name: Upload compiled application
         uses: actions/upload-artifact@v4
@@ -89,19 +93,23 @@ jobs:
 
       - name: Initialize Terraform
         run: |
+          echo "Initializing Terraform with the remote state backend"
           terraform init \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="prefix=packer-windows-demo"
 
       - name: Validate and apply Terraform
         run: |
+          echo "Checking Terraform formatting and configuration"
           terraform fmt -check
           terraform validate
+          echo "Provisioning the image build infrastructure"
           terraform apply -auto-approve
 
       - name: Read WinRM password from Secret Manager
         shell: bash
         run: |
+          echo "Reading the WinRM password from Secret Manager"
           winrm_password="$(gcloud secrets versions access latest \
             --secret="$(terraform output -raw winrm_secret_id)" \
             --project="$TF_VAR_project_id")"
@@ -110,6 +118,7 @@ jobs:
 
       - name: Initialize and validate Packer
         run: |
+          echo "Initializing and validating the Packer template"
           export PKR_VAR_project_id="$TF_VAR_project_id"
           export PKR_VAR_zone="$TF_VAR_zone"
           export PKR_VAR_network="$(terraform output -raw build_network)"
@@ -121,6 +130,7 @@ jobs:
 
       - name: Build and self-test golden image
         run: |
+          echo "Building and self-testing the Windows golden image"
           export PKR_VAR_project_id="$TF_VAR_project_id"
           export PKR_VAR_zone="$TF_VAR_zone"
           export PKR_VAR_network="$(terraform output -raw build_network)"
@@ -142,6 +152,7 @@ jobs:
         env:
           RELEASE_URL: "https://github.com/${{ github.repository }}/releases/download/demo-${{ github.run_id }}/worker-demo.zip"
         run: |
+          echo "Deploying the separate worker VM from the golden image"
           image_name="$(jq -r '.builds[0].artifact_id' packer-manifest.json | cut -d: -f2)"
           terraform apply -auto-approve \
             -var="golden_image=$image_name" \
@@ -150,6 +161,7 @@ jobs:
       - name: Verify deployed application
         shell: bash
         run: |
+          echo "Waiting for the deployed worker application health check"
           worker_ip="$(terraform output -raw worker_public_ip)"
           for attempt in {1..30}; do
             if curl --fail --silent "http://$worker_ip:8080/health"; then
