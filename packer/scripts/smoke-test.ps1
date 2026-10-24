@@ -3,8 +3,12 @@
   image whose only symptom is a load balancer that never goes healthy.
 #>
 $ErrorActionPreference = 'Stop'
-$baked = 'C:\app\baked'
-if (-not (Test-Path $baked)) { Write-Output 'no baked app: smoke test skipped (image is a toolchain base)'; exit 0 }
+# Prefer the custom build's output (custom/ publishes to C:\app\custom); fall back to the simple bake.
+$baked = if (Test-Path 'C:\app\custom\WinBuild.SampleApp.dll') { 'C:\app\custom' }
+         elseif (Test-Path 'C:\app\baked') { 'C:\app\baked' }
+         else { $null }
+if (-not $baked) { Write-Output 'no application in the image: smoke test skipped (image is a toolchain base)'; exit 0 }
+Write-Output "smoke-testing $baked"
 
 Import-Module WebAdministration
 if (-not (Get-WebAppPool -Name 'WinBuildApp' -ErrorAction SilentlyContinue)) {

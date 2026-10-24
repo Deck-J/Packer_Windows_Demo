@@ -36,16 +36,17 @@ The build does not hard-code how the application is compiled. `custom/build.conf
 runs in PowerShell from `workingDirectory` with the configured environment, and the first non-zero exit
 fails the image build.
 
-```json
-{
-  "workingDirectory": "C:\\packer\\custom",
-  "env": { "DOTNET_CLI_TELEMETRY_OPTOUT": "1" },
-  "steps": [
-    { "name": "build",   "command": "dotnet build C:\\packer\\src -c Release --nologo", "timeoutSeconds": 1800 },
-    { "name": "publish", "command": "dotnet publish C:\\packer\\src -c Release -o C:\\app\\custom", "timeoutSeconds": 1800 }
-  ]
-}
-```
+The shipped config is a working example, not a placeholder — it configures NuGet, builds and publishes the
+app, configures IIS (app pool, site, `web.config` with out-of-process hosting and app environment), and
+then proves `/healthz` answers before the image is captured:
+
+| step | file |
+|---|---|
+| nuget-config | `custom/scripts/10-nuget-config.ps1` |
+| build-and-publish | `custom/scripts/20-build.ps1` |
+| configure-iis | `custom/scripts/30-configure-iis.ps1` |
+| verify-site | `custom/scripts/40-verify.ps1` |
+| optional-static-analysis (shipped disabled) | `dotnet format --verify-no-changes` |
 
 - No `build.config.json` means "nothing custom" — the image still builds, it just does not compile anything
   of yours.

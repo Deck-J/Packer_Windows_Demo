@@ -1,0 +1,37 @@
+{
+  "workingDirectory": "C:\\packer\\custom",
+  "env": {
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1",
+    "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1",
+    "NUGET_PACKAGES": "C:\\packer\\.nuget\\packages"
+  },
+  "steps": [
+    {
+      "name": "nuget-config",
+      "command": "& 'C:\\packer\\custom\\scripts\\10-nuget-config.ps1'",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "build-and-publish",
+      "command": "& 'C:\\packer\\custom\\scripts\\20-build.ps1'",
+      "timeoutSeconds": 2400
+    },
+    {
+      "name": "configure-iis",
+      "command": "& 'C:\\packer\\custom\\scripts\\30-configure-iis.ps1'",
+      "timeoutSeconds": 600
+    },
+    {
+      "name": "verify-site",
+      "command": "& 'C:\\packer\\custom\\scripts\\40-verify.ps1'",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "optional-static-analysis",
+      "command": "& dotnet format C:\\packer\\src\\src\\WinBuild.SampleApp --verify-no-changes",
+      "timeoutSeconds": 900,
+      "enabled": false
+    }
+  ]
+}

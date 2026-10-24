@@ -37,7 +37,8 @@ repository variables, then a merge to `main`.
 
 **Your own build.** `custom/` is the contract: `custom/run.ps1` executes the steps listed in
 `custom/build.config.json` (command, working directory, env, timeout per step), and any non-zero exit fails
-the image build. Scripts, config files and NuGet configs live beside it and are copied to the builder
+the image build. The shipped config is a real one — NuGet config, build and publish, IIS site and app pool
+configuration, then a `/healthz` check — so it doubles as the worked example. Scripts, config files and NuGet configs live beside it and are copied to the builder
 verbatim. Every file used is hashed into `C:\packer\custom-manifest.json`, so the image records exactly
 which build recipe produced it. Start from `custom/build.config.example.json`.
 
