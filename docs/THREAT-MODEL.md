@@ -12,6 +12,25 @@ reach them.
 | Runaway cost / crypto-mining | CPU quota 16, budget alerts, 2h TTL janitor, destroy under `if: always()` | A resource created outside Terraform with no labels would be caught only by the billing reconciliation |
 | Supply-chain tampering of the package | Package immutable per version, sha256 recorded at publish, re-verified before staging and again on the node | NuGet author signing not yet configured (needs a certificate) |
 
+## Terraform state
+
+State is the map of the environment, and it can contain attribute values that were never meant to be public —
+some providers write generated credentials into it. It is therefore treated as a secret-bearing artefact:
+
+| control | how |
+|---|---|
+| Encryption at rest | **on by default** — GCS server-side AES-256 with Google-managed keys. Nothing to enable, and nothing to lose if a key is rotated |
+| Customer-managed keys (optional) | CMEK via Cloud KMS if the organisation requires key custody. Adds a key ring, a rotation policy, and a failure mode where a destroyed key makes state unreadable |
+| Who can read it | IAM on the bucket, not the project: only the deployer service account holds `storage.objectAdmin`. Project-level roles are not relied on for this |
+| Exposure | public access prevention + uniform bucket-level access, set at creation and re-asserted by the bootstrap |
+| Recovery | object versioning, with noncurrent versions kept 90 days — enough to roll back a bad apply without keeping a year of state nobody will read |
+| Concurrency | GCS backend lock: two applies cannot interleave and corrupt the map |
+| Leaking through logs | no `terraform output` of sensitive values in CI; secrets live in Secret Manager and are referenced, not passed through variables that end up in state |
+
+Residual risks, stated: anyone who compromises the deployer service account can read state and therefore every
+attribute in it; and CMEK, if enabled, adds a way to lose state permanently. That is why the bucket is
+versioned and why the deployer's own permissions are the smallest set that can still deploy.
+
 ## The troubleshooting path (opt-in, bounded)
 
 `debug_keep_vm=true` deliberately leaves a machine alive with an administrator account. It is bounded on

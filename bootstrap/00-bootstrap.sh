@@ -42,7 +42,17 @@ if ! gsutil ls -b "$STATE_BUCKET" >/dev/null 2>&1; then
     --uniform-bucket-level-access --public-access-prevention
 fi
 gcloud storage buckets update "$STATE_BUCKET" --versioning >/dev/null
-echo "state bucket: $STATE_BUCKET"
+
+# State is a map of the whole environment and can contain attribute values that were never meant to be public
+# (some providers write generated credentials into it). Encryption at rest is Google-managed by default; the
+# controls that actually matter are who can read it, that old versions survive a bad apply, and that nothing
+# else in the project can quietly read it.
+cat > /tmp/state-lifecycle.json <<'JSON'
+{"rule":[{"action":{"type":"Delete"},"condition":{"age":90,"isLive":false}}]}
+JSON
+gcloud storage buckets update "$STATE_BUCKET" --lifecycle-file=/tmp/state-lifecycle.json >/dev/null
+STATE_BUCKET_FOR_IAM="$STATE_BUCKET"
+echo "state bucket: $STATE_BUCKET (versioned, public access prevented, deployer-only writes, 90-day old versions)"
 
 say "3/8 Artifact + build-input buckets (lifecycle 14 days, versioned)"
 ARTIFACT_BUCKET="gs://${PROJECT_ID}-${PREFIX}-artifacts"
@@ -73,6 +83,13 @@ SA_BUILDER="sa-${PREFIX}-builder@${PROJECT_ID}.iam.gserviceaccount.com"
 SA_NODE="sa-${PREFIX}-node@${PROJECT_ID}.iam.gserviceaccount.com"
 SA_BUILD="sa-${PREFIX}-cloudbuild@${PROJECT_ID}.iam.gserviceaccount.com"
 SA_DEPLOY="sa-${PREFIX}-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# The state bucket is readable only by the identities that deploy; project-wide roles are not enough.
+if [ -n "${STATE_BUCKET_FOR_IAM:-}" ]; then
+  gcloud storage buckets add-iam-policy-binding "$STATE_BUCKET_FOR_IAM" \
+    --member="serviceAccount:${SA_DEPLOY}" --role="roles/storage.objectAdmin" --quiet >/dev/null
+  echo "  state bucket IAM: ${SA_DEPLOY} only"
+fi
 
 say "5/8 Role bindings (project-level, deliberately narrow)"
 bind() { gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="$1" --role="$2" --condition=None --quiet >/dev/null; echo "  $2 -> ${1#serviceAccount:}"; }
