@@ -58,6 +58,25 @@ variable "source_url" {
   description = "gs:// URL of the source archive for this commit (empty = skip the baked smoke-test copy)"
   default     = ""
 }
+variable "custom_dir" {
+  type        = string
+  default     = "../custom"
+  description = "Folder holding the build contract: run.ps1, build.config.json and any scripts it needs"
+}
+variable "debug_keep_vm" {
+  type        = bool
+  default     = false
+  description = "Leave the build machine running, with an RDP account reachable only through IAP, for troubleshooting"
+}
+variable "debug_user" {
+  type    = string
+  default = "packer-debug"
+}
+variable "debug_password" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
 variable "app_version" {
   type        = string
   description = "Assembly version baked into the smoke-test copy"
@@ -148,7 +167,17 @@ build {
     destination = "C:/packer/scripts"
   }
 
-  # 2. Toolchain: Build Tools, Windows SDK, .NET SDK, IIS + ASP.NET Core Hosting Bundle.
+  # 2. The build contract: the custom folder and the source it compiles.
+  provisioner "file" {
+    source      = "${path.root}/../custom/"
+    destination = "C:/packer/custom"
+  }
+  provisioner "file" {
+    source      = "${path.root}/../src/"
+    destination = "C:/packer/src"
+  }
+
+  # 2b. Toolchain: Build Tools, Windows SDK, .NET SDK, IIS + ASP.NET Core Hosting Bundle.
   provisioner "powershell" {
     environment_vars = [
       "BUILDTOOLS_VERSION=${var.buildtools_version}",
@@ -157,18 +186,31 @@ build {
     script = "scripts/install-toolchain.ps1"
   }
 
-  # 3. Bake a smoke-test copy of the app so the image can be validated without any package registry round trip.
+  # 3. Run the custom build entrypoint. This is where an application's own build goes: whatever
+  #    custom/build.config.json lists is executed, and a non-zero exit fails the image build.
+  provisioner "powershell" {
+    environment_vars = ["APP_VERSION=${var.app_version}"]
+    inline           = ["& 'C:\\packer\\custom\\run.ps1'"]
+  }
+
+  # 3b. Troubleshooting access, only when the pipeline asked for it.
+  provisioner "powershell" {
+    environment_vars = ["DEBUG_USER=${var.debug_user}", "DEBUG_PASSWORD=${var.debug_password}"]
+    script           = "scripts/create-debug-user.ps1"
+  }
+
+  # 4. Bake a smoke-test copy of the app so the image can be validated without any package registry round trip.
   provisioner "powershell" {
     environment_vars = ["APP_VERSION=${var.app_version}", "SOURCE_URL=${var.source_url}"]
     script           = "scripts/bake-app.ps1"
   }
 
-  # 4. Prove it serves before we capture an image that claims to serve.
+  # 5. Prove it serves before we capture an image that claims to serve.
   provisioner "powershell" {
     script = "scripts/smoke-test.ps1"
   }
 
-  # 5. Sysprep and shut down so the captured image is a clean template, not a used machine.
+  # 6. Sysprep so the captured image is a clean template, not a used machine.
   provisioner "powershell" {
     script = "scripts/sysprep.ps1"
   }

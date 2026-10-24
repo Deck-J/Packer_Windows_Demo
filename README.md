@@ -33,6 +33,21 @@ docs/                         PLAN, RUNBOOK, ROLLBACK, COST, THREAT-MODEL, adr/
 Follow [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §1: it is one workflow dispatch (the bootstrap), then eight
 repository variables, then a merge to `main`.
 
+## Two things you can change without touching the pipeline
+
+**Your own build.** `custom/` is the contract: `custom/run.ps1` executes the steps listed in
+`custom/build.config.json` (command, working directory, env, timeout per step), and any non-zero exit fails
+the image build. Scripts, config files and NuGet configs live beside it and are copied to the builder
+verbatim. Every file used is hashed into `C:\packer\custom-manifest.json`, so the image records exactly
+which build recipe produced it. Start from `custom/build.config.example.json`.
+
+**A machine to debug on.** Dispatch the pipeline with `debug_keep_vm=true`: teardown is skipped, a failed
+Packer build leaves its machine running (`-on-error=abort`), a troubleshooting account is created with a
+password in Secret Manager, and RDP is enabled **only from the IAP range** — you reach it with
+`gcloud compute start-iap-tunnel <vm> 3389 --local-host-port=localhost:13389`. The machine carries a
+`ttl=debug-<n>h` label and `scripts/reap-leftovers.sh` (scheduled every two hours) deletes it whether or not
+anyone remembers.
+
 ## What this repository will not do
 
 - Run Windows on the runner, or hold a cloud credential: authentication is OIDC → WIF, always.

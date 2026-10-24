@@ -12,6 +12,8 @@ substitutions:
   _APP_VERSION: "0.0.0"
   _SOURCE_URL: ""
   _BUILDER_SA: ""
+  _DEBUG_KEEP_VM: "false"
+  _DEBUG_USER: "packer-debug"
 
 options:
   machineType: E2_STANDARD_2
@@ -32,6 +34,20 @@ steps:
         ssh-keygen -t ed25519 -N '' -C "packer-build-${BUILD_ID}" -f /workspace/packer_key -q
         chmod 600 /workspace/packer_key
         echo "generated a per-build SSH keypair (not printed)"
+        # Troubleshooting access is opt-in. When it is on, the password lives in Secret Manager, never in
+        # this log, and the machine it opens is reachable only through an IAP tunnel.
+        if [ "${_DEBUG_KEEP_VM}" = "true" ]; then
+          pw=$$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
+          printf '%s' "$$pw" > /workspace/debug_password
+          chmod 600 /workspace/debug_password
+          secret="winbuild-debug-${BUILD_ID}"
+          (gcloud secrets describe "$$secret" >/dev/null 2>&1 || \
+             gcloud secrets create "$$secret" --replication-policy=automatic --labels=owner=winbuild-ci) 
+          printf '%s' "$$pw" | gcloud secrets versions add "$$secret" --data-file=- >/dev/null
+          echo "debug access ON: password stored as secret $$secret"
+        else
+          echo "debug access off"
+        fi
 
   # 2. Packer builds, provisions and captures the image.
   - id: packer-build
@@ -43,7 +59,17 @@ steps:
         set -eu
         cd /workspace/packer
         packer init .
-        packer build \
+        on_error=""
+        if [ "${_DEBUG_KEEP_VM}" = "true" ]; then
+          # Leave the machine up if the build fails: the point of the flag is to inspect that failure.
+          on_error="-on-error=abort"
+        fi
+        debug_password=""
+        [ -f /workspace/debug_password ] && debug_password="$$(cat /workspace/debug_password)"
+        packer build $$on_error \
+          -var "debug_keep_vm=${_DEBUG_KEEP_VM}" \
+          -var "debug_user=${_DEBUG_USER}" \
+          -var "debug_password=$$debug_password" \
           -var "project_id=${PROJECT_ID}" \
           -var "zone=${_ZONE}" \
           -var "service_account_email=${_BUILDER_SA}" \

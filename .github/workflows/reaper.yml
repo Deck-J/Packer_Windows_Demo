@@ -1,0 +1,28 @@
+name: reaper
+
+# Deletes machines labelled owner=winbuild-ci once they exceed their own ttl label. This is the layer that
+# does not depend on the pipeline finishing: a cancelled run, a dead runner or a forgotten troubleshooting
+# machine all get swept by the clock.
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: reap
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT }}
+        run: bash scripts/reap-leftovers.sh

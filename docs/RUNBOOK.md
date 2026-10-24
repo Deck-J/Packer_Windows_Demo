@@ -30,6 +30,50 @@ teardown result.
 | `audit` finds leftovers | the printed inventory | `terraform destroy` was skipped (check the `deploy` result) or a resource was made outside Terraform |
 | Run dies mid-flight | `gh run list`, then the label sweep by hand | runner lost: teardown must be done manually — `terraform destroy` with the same vars, then the sweep |
 
+## 3b. Custom build steps
+
+The build does not hard-code how the application is compiled. `custom/build.config.json` lists steps; each
+runs in PowerShell from `workingDirectory` with the configured environment, and the first non-zero exit
+fails the image build.
+
+```json
+{
+  "workingDirectory": "C:\\packer\\custom",
+  "env": { "DOTNET_CLI_TELEMETRY_OPTOUT": "1" },
+  "steps": [
+    { "name": "build",   "command": "dotnet build C:\\packer\\src -c Release --nologo", "timeoutSeconds": 1800 },
+    { "name": "publish", "command": "dotnet publish C:\\packer\\src -c Release -o C:\\app\\custom", "timeoutSeconds": 1800 }
+  ]
+}
+```
+
+- No `build.config.json` means "nothing custom" — the image still builds, it just does not compile anything
+  of yours.
+- `C:\packer\custom.log` is the full transcript; `C:\packer\custom-manifest.json` hashes every file used.
+- Secrets do not belong in this file. Read them from metadata or Secret Manager inside a step.
+
+## 3c. Leaving the build machine up for troubleshooting
+
+Dispatch `pipeline` with **debug_keep_vm = true** (and optionally `debug_ttl_hours`, default 4):
+
+- teardown is skipped;
+- a Packer failure leaves the builder running (`-on-error=abort`), which is the machine that holds the
+  half-installed toolchain and the build log you actually want;
+- a local administrator `packer-debug` is created with a per-build password stored as the Secret Manager
+  secret `winbuild-debug-<cloud-build-id>`;
+- RDP is enabled but the rule only admits `35.235.240.0/20`, so the connection is:
+
+```bash
+gcloud secrets versions access latest --secret=winbuild-debug-<cloud-build-id>
+gcloud compute start-iap-tunnel <instance> 3389 --local-host-port=localhost:13389 --zone=<zone>
+# then RDP to localhost:13389 as packer-debug
+```
+
+If the build **succeeded** there is no surviving machine — create one from the image instead:
+`PROJECT_ID=… NODE_SA=… TTL=4h scripts/debug-vm.sh`.
+
+Cleanup is not your job: the instance is labelled `ttl=debug-<n>h` and `reaper.yml` deletes it on schedule.
+
 ## 4. Cheap recovery
 
 ```bash

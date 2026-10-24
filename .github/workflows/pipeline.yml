@@ -14,6 +14,14 @@ on:
         description: "Reuse the newest winbuild-app image instead of building one"
         type: boolean
         default: false
+      debug_keep_vm:
+        description: "Leave the build machine up with RDP (IAP-only) for troubleshooting, and skip teardown"
+        type: boolean
+        default: false
+      debug_ttl_hours:
+        description: "Hours before the reaper deletes a machine left up for troubleshooting"
+        type: string
+        default: "4"
 
 permissions:
   contents: read
@@ -59,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           gcloud builds submit --config cloudbuild/image.yaml \
-            --substitutions="_IMAGE_VERSION=${IMAGE_VERSION},_APP_VERSION=${VERSION},_SOURCE_URL=${{ steps.src.outputs.url }},_BUILDER_SA=${{ vars.BUILDER_SA }},_ZONE=${{ vars.GCP_ZONE }}" \
+            --substitutions="_IMAGE_VERSION=${IMAGE_VERSION},_APP_VERSION=${VERSION},_SOURCE_URL=${{ steps.src.outputs.url }},_BUILDER_SA=${{ vars.BUILDER_SA }},_ZONE=${{ vars.GCP_ZONE }},_DEBUG_KEEP_VM=${{ inputs.debug_keep_vm || 'false' }}" \
             --project "${{ vars.GCP_PROJECT }}" \
             --async=false --format='value(id)'
 
@@ -228,11 +236,54 @@ jobs:
           set -euo pipefail
           bash scripts/verify-through-lb.sh "${{ needs.deploy.outputs.lb_ip }}"
 
+  debug-access:
+    name: troubleshooting access (opt-in)
+    runs-on: ubuntu-latest
+    needs: build-image
+    if: always() && inputs.debug_keep_vm == true
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Find the machine, set its TTL, print how to reach it
+        env:
+          TTL: ${{ inputs.debug_ttl_hours }}
+        run: |
+          set -euo pipefail
+          row=$(gcloud compute instances list --project "${{ vars.GCP_PROJECT }}" \
+                  --filter="labels.source=packer" \
+                  --format="value(name,zone.basename(),status)" | head -1)
+          if [ -z "${row:-}" ]; then
+            echo "::notice::No builder machine survived (the build may have succeeded). Create one from the"
+            echo "::notice::image with scripts/debug-vm.sh, or re-run with a deliberately failing custom step."
+            exit 0
+          fi
+          name=$(echo "$row" | awk '{print $1}'); zone=$(echo "$row" | awk '{print $2}'); state=$(echo "$row" | awk '{print $3}')
+          gcloud compute instances add-labels "$name" --zone "$zone" --labels="ttl=debug-${TTL}h,owner=winbuild-ci" --quiet
+          {
+            echo "### Troubleshooting machine left running"
+            echo ""
+            echo "- instance: \`$name\` ($zone), state **$state**"
+            echo "- auto-deleted after **${TTL}h** by the reaper"
+            echo ""
+            echo "RDP (no public port; tunnel through IAP):"
+            echo '```bash'
+            echo "gcloud compute start-iap-tunnel $name 3389 --local-host-port=localhost:13389 --zone=$zone"
+            echo "# then connect your RDP client to localhost:13389"
+            echo '```'
+            echo "Password: Secret Manager secret \`winbuild-debug-<cloud-build-id>\` (created by this run)."
+            echo ""
+            echo "SSH also works with the keypair the build generated, if you need a shell instead."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   destroy:
     name: destroy everything (always)
     runs-on: ubuntu-latest
     needs: [deploy, verify]
-    if: always() && needs.deploy.result == 'success'
+    if: always() && needs.deploy.result == 'success' && inputs.debug_keep_vm != true
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3

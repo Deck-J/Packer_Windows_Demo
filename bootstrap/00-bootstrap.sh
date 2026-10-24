@@ -81,6 +81,8 @@ bind "serviceAccount:${SA_DEPLOY}" roles/cloudbuild.builds.editor
 bind "serviceAccount:${SA_DEPLOY}" roles/storage.admin
 bind "serviceAccount:${SA_DEPLOY}" roles/compute.admin
 bind "serviceAccount:${SA_DEPLOY}" roles/logging.viewer
+# Debug access stores a per-build password in Secret Manager rather than in a log.
+bind "serviceAccount:${SA_DEPLOY}" roles/secretmanager.admin
 bind "serviceAccount:${SA_DEPLOY}" roles/iam.serviceAccountUser
 # cloud build: create/delete the builder VM and its disks, act as the builder SA
 bind "serviceAccount:${SA_BUILD}" roles/compute.instanceAdmin.v1

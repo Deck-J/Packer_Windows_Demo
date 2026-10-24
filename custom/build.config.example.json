@@ -1,0 +1,32 @@
+{
+  "$comment": "Copy to build.config.json and edit. Every step runs in PowerShell from workingDirectory; the build fails on the first non-zero exit code. Keep secrets out of this file - pass them as instance metadata or Secret Manager references resolved by a script.",
+
+  "workingDirectory": "C:\\packer\\custom",
+  "env": {
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1"
+  },
+
+  "steps": [
+    {
+      "name": "configure-nuget",
+      "command": "dotnet nuget add source https://api.nuget.org/v3/index.json --name nuget.org --configfile C:\\packer\\custom\\NuGet.Config",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "build-application",
+      "command": "dotnet build C:\\packer\\src\\src\\WinBuild.SampleApp -c Release -p:Version=$env:APP_VERSION --nologo",
+      "timeoutSeconds": 1800
+    },
+    {
+      "name": "publish-for-iis",
+      "command": "dotnet publish C:\\packer\\src\\src\\WinBuild.SampleApp -c Release -o C:\\app\\custom -p:Version=$env:APP_VERSION --nologo",
+      "timeoutSeconds": 1800
+    },
+    {
+      "name": "smoke-check-binary",
+      "command": "if (-not (Test-Path C:\\app\\custom\\WinBuild.SampleApp.dll)) { exit 1 }",
+      "timeoutSeconds": 60
+    }
+  ]
+}

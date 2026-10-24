@@ -12,6 +12,14 @@ reach them.
 | Runaway cost / crypto-mining | CPU quota 16, budget alerts, 2h TTL janitor, destroy under `if: always()` | A resource created outside Terraform with no labels would be caught only by the billing reconciliation |
 | Supply-chain tampering of the package | Package immutable per version, sha256 recorded at publish, re-verified before staging and again on the node | NuGet author signing not yet configured (needs a certificate) |
 
+## The troubleshooting path (opt-in, bounded)
+
+`debug_keep_vm=true` deliberately leaves a machine alive with an administrator account. It is bounded on
+four axes: **network** (RDP admits only the IAP range, so there is no public listener), **credential** (a
+per-build 32-character password in Secret Manager, not in a log or the repo), **time** (`ttl=debug-<n>h`
+label plus the scheduled reaper) and **authority** (the deployer service account is the only thing that can
+read the secret). It is a flag a human sets for one run, not a default.
+
 ## Deliberate accepted risks
 
 - **The builder VM has an external IP.** Needed for Microsoft/NuGet downloads and Windows activation; no
