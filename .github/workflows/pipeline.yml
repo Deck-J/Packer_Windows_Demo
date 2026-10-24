@@ -288,14 +288,6 @@ jobs:
           service_account: ${{ vars.DEPLOYER_SA }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Custom validation suite (deploy phase, against the LB)
-        env:
-          VERSION: ${{ env.VERSION }}
-        run: |
-          pwsh -NoProfile -File ./custom/tests/run-tests.ps1 \
-            -Phase deploy -BaseUrl "http://${{ needs.deploy.outputs.lb_ip }}" \
-            -ExpectedVersion "${VERSION}" -SkipUnitTests
-
       - name: Wait for both backends, then prove the path
         env:
           RUN_ID: ${{ github.run_number }}
@@ -303,6 +295,14 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/verify-through-lb.sh "${{ needs.deploy.outputs.lb_ip }}"
+
+      - name: Custom validation suite (deploy phase, against the LB)
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          pwsh -NoProfile -File ./custom/tests/run-tests.ps1 \
+            -Phase deploy -BaseUrl "http://${{ needs.deploy.outputs.lb_ip }}" \
+            -ExpectedVersion "${VERSION}" -SkipUnitTests
 
   debug-access:
     environment: gcp-test
