@@ -69,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           gcloud builds submit --config cloudbuild/image.yaml \
-            --substitutions="_IMAGE_VERSION=${IMAGE_VERSION},_APP_VERSION=${VERSION},_SOURCE_URL=${{ steps.src.outputs.url }},_BUILDER_SA=${{ vars.BUILDER_SA }},_ZONE=${{ vars.GCP_ZONE }},_DEBUG_KEEP_VM=${{ inputs.debug_keep_vm || 'false' }}" \
+            --substitutions="_IMAGE_VERSION=${IMAGE_VERSION},_APP_VERSION=${VERSION},_SOURCE_URL=${{ steps.src.outputs.url }},_BUILDER_SA=${{ vars.BUILDER_SA }},_ZONE=${{ vars.GCP_ZONE }},_DEBUG_KEEP_VM=${{ inputs.debug_keep_vm || 'false' }},_VS_EDITION=${{ vars.VS_EDITION || 'enterprise' }},_VS_WORKLOADS=${{ vars.VS_WORKLOADS || '' }},_VS_DISABLE_OUT_OF_PROC=${{ vars.VS_DISABLE_OUT_OF_PROC || 'true' }},_VS_EXTRA_VSIX=${{ vars.VS_EXTRA_VSIX || '' }}" \
             --project "${{ vars.GCP_PROJECT }}" \
             --async=false --format='value(id)'
 

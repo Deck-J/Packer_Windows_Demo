@@ -58,7 +58,9 @@ if ($workloads.Count -eq 0) {
         'Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools',
         'Microsoft.VisualStudio.Workload.NativeDesktopBuildTools',
         'Microsoft.VisualStudio.Component.Windows11SDK.22621',
-        'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+        'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+        'Microsoft.Net.Component.4.8.TargetingPack',
+        'Microsoft.Net.Component.4.8.SDK'
     )
 }
 Log ("workloads: " + ($workloads -join ' '))

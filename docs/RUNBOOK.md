@@ -61,6 +61,17 @@ Costs of switching: the image grows from ~15 GB to 30-45 GB, the bake takes 15-3
 **licensing is yours to confirm** — Community on a shared build server is not the intended use, and
 Professional/Enterprise need a subscription. That is why the default is Build Tools and the switch is explicit.
 
+### The demo builds both ways, in one image
+
+`custom/build.config.json` runs, in order: `dotnet` build+publish (the app), **`msbuild-demo`** (legacy .NET
+Framework project via MSBuild.exe), **`devenv-build`** (the same project via the IDE), then IIS configuration,
+site verification and the validation suite.
+
+Both demo steps write `C:\packer\demo-manifest.json`, and `custom/tests/15-build-demo.Tests.ps1` fails if either
+kind is missing or a recorded artefact hash no longer matches. The image defaults to `vs_edition=enterprise`
+via the pipeline; set the `VS_EDITION` repository variable to `buildtools` for the smaller agent-licensed image
+(the devenv step then reports a skip instead of a build).
+
 ### Demonstrating a devenv build
 
 `custom/scripts/25-devenv-build.ps1` is a step in the build: it finds `devenv.com` with `vswhere`, builds

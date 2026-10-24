@@ -35,7 +35,7 @@ if (-not $devenv) {
 Log "devenv: $devenv"
 (& $devenv /? 2>&1 | Select-Object -First 2) | ForEach-Object { Log "  $_" }
 
-$solution = 'C:\packer\src\WinBuild.sln'
+$solution = 'C:\packer\src\WinBuild.Demo.sln' 
 if (-not (Test-Path $solution)) { throw "solution not found at $solution" }
 
 $buildLog = 'C:\packer\devenv-build.log'
@@ -50,12 +50,18 @@ if (Test-Path $buildLog) {
 if ($exit -ne 0) { throw "devenv build failed with exit code $exit (see $buildLog)" }
 
 # Assert the artefact, not just the exit code.
-$dll = 'C:\packer\src\WinBuild.SampleApp\bin\x64\Release\net8.0\WinBuild.SampleApp.dll'
-if (-not (Test-Path $dll)) {
-    $dll = 'C:\packer\src\WinBuild.SampleApp\bin\Release\net8.0\WinBuild.SampleApp.dll'
-}
-if (-not (Test-Path $dll)) { throw "devenv reported success but produced no assembly" }
+$exe = 'C:\packer\src\WinBuild.MsBuildDemo\bin\Release\WinBuild.MsBuildDemo.exe'
+if (-not (Test-Path $exe)) { throw "devenv reported success but produced no executable" }
+$hash = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLower()
+Log "devenv produced $exe (sha256 $hash)"
 
-$hash = (Get-FileHash -Algorithm SHA256 -Path $dll).Hash.ToLower()
-Log "devenv produced $dll (sha256 $hash)"
+# Record it beside the MSBuild result, so the pipeline can show both toolchains in one place.
+$manifestPath = 'C:\packer\demo-manifest.json'
+$entries = @()
+if (Test-Path $manifestPath) {
+    try { $entries = @((Get-Content $manifestPath -Raw | ConvertFrom-Json).builds) } catch { $entries = @() }
+}
+$entries += [pscustomobject]@{ kind = 'devenv'; tool = $devenv; artifact = $exe; sha256 = $hash; at = (Get-Date).ToString('o') }
+@{ builds = $entries } | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding UTF8
+
 Log 'devenv build demonstration passed'

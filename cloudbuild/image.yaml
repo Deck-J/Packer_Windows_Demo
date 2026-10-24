@@ -14,6 +14,10 @@ substitutions:
   _BUILDER_SA: ""
   _DEBUG_KEEP_VM: "false"
   _DEBUG_USER: "packer-debug"
+  _VS_EDITION: "enterprise"
+  _VS_WORKLOADS: ""
+  _VS_DISABLE_OUT_OF_PROC: "true"
+  _VS_EXTRA_VSIX: ""
 
 options:
   machineType: E2_STANDARD_2
@@ -78,6 +82,10 @@ steps:
           -var "image_version=${_IMAGE_VERSION}" \
           -var "app_version=${_APP_VERSION}" \
           -var "source_url=${_SOURCE_URL}" \
+          -var "vs_edition=${_VS_EDITION}" \
+          -var "vs_workloads=${_VS_WORKLOADS}" \
+          -var "vs_disable_out_of_proc_build=${_VS_DISABLE_OUT_OF_PROC}" \
+          -var "vs_extra_vsix_urls=${_VS_EXTRA_VSIX}" \
           .
         # The key is not needed beyond this step.
         shred -u /workspace/packer_key /workspace/packer_key.pub 2>/dev/null || rm -f /workspace/packer_key /workspace/packer_key.pub

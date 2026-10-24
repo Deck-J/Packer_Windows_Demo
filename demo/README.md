@@ -1,4 +1,23 @@
-# Demonstrating a `devenv` build
+# One image, two build toolchains
+
+The demo image is built to do **both** kinds of build in a single run, because that is the realistic ask: a
+modern SDK-style app *and* a legacy project that only an IDE toolchain can compile.
+
+| step | toolchain | project | evidence |
+|---|---|---|---|
+| `build-and-publish` | `dotnet` (SDK) | `src/WinBuild.SampleApp` | publish output served by IIS |
+| `msbuild-demo` | **MSBuild.exe** via vswhere | `src/WinBuild.MsBuildDemo` — legacy, non-SDK-style, .NET Framework 4.8 | `C:\packer\msbuild.log`, exe hash, and the exe is executed |
+| `devenv-build` | **devenv.com** (the IDE) | `WinBuild.Demo.sln` containing the same legacy project | `C:\packer\devenv.log` + IDE build log |
+
+Both demo steps append to `C:\packer\demo-manifest.json`, and `custom/tests/15-build-demo.Tests.ps1` fails the
+build unless **both** entries exist, their artefacts exist, and their sha256 still matches. So the claim "this
+image builds both ways" is checked, not asserted.
+
+The image is built with `vs_edition=enterprise` by default now (the pipeline passes it), because a Build Tools
+image has no `devenv` and the whole point is to demonstrate the IDE build. Switch it back with the
+`VS_EDITION` repository variable when you want the smaller, agent-licensed image.
+
+## Demonstrating a `devenv` build
 
 `custom/scripts/25-devenv-build.ps1` builds `WinBuild.sln` with **`devenv.com`** and asserts the assembly —
 not the exit code alone. It runs as a step in `custom/build.config.json`.
