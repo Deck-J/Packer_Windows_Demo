@@ -19,6 +19,11 @@
       "timeoutSeconds": 2400
     },
     {
+      "name": "devenv-build",
+      "command": "& 'C:\\packer\\custom\\scripts\\25-devenv-build.ps1'",
+      "timeoutSeconds": 2400
+    },
+    {
       "name": "configure-iis",
       "command": "& 'C:\\packer\\custom\\scripts\\30-configure-iis.ps1'",
       "timeoutSeconds": 600

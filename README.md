@@ -54,6 +54,12 @@ nothing is installed — the pipeline costs nothing until you opt in, and the **
 dry-run**: it proves the metadata and Secret Manager path and skips the download. Setup and caveats:
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §3e.
 
+## Proving it can build with the IDE
+
+`custom/scripts/25-devenv-build.ps1` builds the solution with `devenv.com` and asserts the artefact, so "this
+image can do an IDE build" is a log file rather than a claim — skipped, honestly, on a Build Tools image. For a
+`.vdproj` MSI it needs the IDE plus the Installer Projects extension: see [`demo/README.md`](demo/README.md).
+
 ## Two things you can change without touching the pipeline
 
 **Your own build.** `custom/` is the contract: `custom/run.ps1` executes the steps listed in

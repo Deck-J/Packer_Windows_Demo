@@ -96,6 +96,11 @@ variable "vs_disable_out_of_proc_build" {
   default     = false
   description = "Run DisableOutOfProcBuild.exe so devenv builds in-proc. Needed for .vdproj installer projects, SSDT/SSRS, VSTO/Office add-ins and some legacy project types. Requires the full IDE."
 }
+variable "vs_extra_vsix_urls" {
+  type        = string
+  default     = ""
+  description = "Comma-separated .vsix URLs installed into the IDE (e.g. Microsoft Visual Studio Installer Projects, needed for .vdproj). Requires the full IDE. Pin the version in the URL."
+}
 variable "dotnet_channel" {
   type    = string
   default = "8.0"
@@ -194,6 +199,7 @@ build {
       "VS_EDITION=${var.vs_edition}",
       "VS_WORKLOADS=${var.vs_workloads}",
       "VS_DISABLE_OUT_OF_PROC=${var.vs_disable_out_of_proc_build}",
+      "VS_EXTRA_VSIX=${var.vs_extra_vsix_urls}",
       "DOTNET_CHANNEL=${var.dotnet_channel}",
     ]
     script = "scripts/install-toolchain.ps1"

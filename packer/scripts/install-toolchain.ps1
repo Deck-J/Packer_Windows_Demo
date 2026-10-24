@@ -75,6 +75,28 @@ $msbuild = if ($edition -eq 'buildtools') { 'C:\BuildTools\MSBuild\Current\Bin\M
            else { "$installPath\MSBuild\Current\Bin\MSBuild.exe" }
 Check $msbuild '-version'
 
+# Optional VSIX extensions: some project types need one (Installer Projects for .vdproj, for example).
+# A URL that cannot be fetched fails the build rather than shipping an image that cannot build the project
+# it was asked for.
+if ($env:VS_EXTRA_VSIX) {
+    if ($edition -eq 'buildtools') { throw "VS_EXTRA_VSIX is set but the image is Build Tools; set vs_edition to install extensions" }
+    $vsixInstaller = Join-Path $installPath 'Common7\IDE\VSIXInstaller.exe'
+    if (-not (Test-Path $vsixInstaller)) { throw "VSIXInstaller.exe not found at $vsixInstaller" }
+    New-Item -ItemType Directory -Force -Path 'C:\packer\vsix' | Out-Null
+    $i = 0
+    foreach ($url in ($env:VS_EXTRA_VSIX -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $i++
+        $file = "C:\packer\vsix\$i.vsix"
+        Log "downloading extension $i from $url"
+        Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing
+        if ((Get-Item $file).Length -lt 10KB) { throw "extension $i looks truncated ($((Get-Item $file).Length) bytes)" }
+        Log "installing extension $i"
+        $p = Start-Process -FilePath $vsixInstaller -ArgumentList @('/q', '/a', $file) -Wait -PassThru
+        if ($p.ExitCode -ne 0) { throw "VSIXInstaller failed for $url (exit $($p.ExitCode))" }
+        Log "extension $i installed"
+    }
+}
+
 # Some legacy project types - .vdproj installers, SSDT/SSRS report projects, VSTO and Office add-ins - fail
 # from the command line because devenv builds them out of process. Visual Studio ships a tool that turns
 # that off; it writes a per-user registry value, so it must run as the account that will do the builds.

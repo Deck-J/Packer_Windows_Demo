@@ -61,6 +61,27 @@ Costs of switching: the image grows from ~15 GB to 30-45 GB, the bake takes 15-3
 **licensing is yours to confirm** — Community on a shared build server is not the intended use, and
 Professional/Enterprise need a subscription. That is why the default is Build Tools and the switch is explicit.
 
+### Demonstrating a devenv build
+
+`custom/scripts/25-devenv-build.ps1` is a step in the build: it finds `devenv.com` with `vswhere`, builds
+`WinBuild.sln` as `Release|x64`, prints the tail of the IDE's own build log, and asserts the assembly exists
+(failing on a missing artefact even when the exit code is zero).
+
+- On a **Build Tools** image it logs that `devenv` is absent and skips. It does not pretend.
+- On an **IDE** image (`vs_edition=community|professional|enterprise`) it builds for real.
+
+Evidence, inspectable on the machine (use `debug_keep_vm=true` or `scripts/debug-vm.sh`):
+
+| file | what it proves |
+|---|---|
+| `C:\packer\devenv.log` | that `devenv.com` was located, which path, the command line, exit code, artefact sha256 |
+| `C:\packer\devenv-build.log` | the IDE's own build log for the solution |
+| the assembly in `bin\...\Release` | that something was actually produced |
+
+For a `.vdproj` (installer MSI) rather than a plain solution build, see
+[`demo/README.md`](../demo/README.md): it needs the Installer Projects VSIX (`vs_extra_vsix_urls`) and usually
+`vs_disable_out_of_proc_build=true`.
+
 ### Disabling out-of-process builds
 
 A related switch, and the one people hit with older projects: `.vdproj` installer projects, SSDT/SSRS report
