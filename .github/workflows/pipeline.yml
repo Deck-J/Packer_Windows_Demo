@@ -173,7 +173,7 @@ jobs:
           bash scripts/phase.sh milestone 5 "Upload succeeded — ${{ steps.pack.outputs.nupkg }}"
 
       - name: Attest provenance
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ steps.pack.outputs.nupkg }}
 
