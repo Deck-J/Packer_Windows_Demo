@@ -1,0 +1,105 @@
+# Cloud Build: build the Windows image with Packer.
+#
+# Cloud Build is the controller, not the Windows host: its workers are Linux containers, so the Windows
+# work happens on a temporary GCE VM that Packer creates, provisions over an **IAP-tunnelled SSH** session
+# using a per-build keypair, syspreps, captures as an image, and deletes — including on failure.
+#
+# Invoked by .github/workflows/pipeline.yml with `gcloud builds submit`.
+substitutions:
+  _REGION: us-central1
+  _ZONE: us-central1-a
+  _IMAGE_VERSION: "0.0.0-dev"
+  _APP_VERSION: "0.0.0"
+  _SOURCE_URL: ""
+  _BUILDER_SA: ""
+
+options:
+  machineType: E2_STANDARD_2
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true
+
+timeout: 5400s # 90 min: Build Tools install is 15-30 min and a Windows boot is slow
+
+steps:
+  # 1. A per-build SSH keypair. Never logged, never committed, destroyed with the build.
+  - id: ssh-keypair
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        ssh-keygen -t ed25519 -N '' -C "packer-build-${BUILD_ID}" -f /workspace/packer_key -q
+        chmod 600 /workspace/packer_key
+        echo "generated a per-build SSH keypair (not printed)"
+
+  # 2. Packer builds, provisions and captures the image.
+  - id: packer-build
+    name: hashicorp/packer:1.11.2
+    entrypoint: sh
+    args:
+      - -c
+      - |
+        set -eu
+        cd /workspace/packer
+        packer init .
+        packer build \
+          -var "project_id=${PROJECT_ID}" \
+          -var "zone=${_ZONE}" \
+          -var "service_account_email=${_BUILDER_SA}" \
+          -var "ssh_private_key_file=/workspace/packer_key" \
+          -var "ssh_public_key=$$(cut -d' ' -f1,2 /workspace/packer_key.pub)" \
+          -var "image_version=${_IMAGE_VERSION}" \
+          -var "app_version=${_APP_VERSION}" \
+          -var "source_url=${_SOURCE_URL}" \
+          .
+        # The key is not needed beyond this step.
+        shred -u /workspace/packer_key /workspace/packer_key.pub 2>/dev/null || rm -f /workspace/packer_key /workspace/packer_key.pub
+
+  # 3. Record what was built, so the run's provenance has an immutable artefact.
+  - id: record-manifest
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        img="winbuild-app-$$(echo '${_IMAGE_VERSION}' | tr '.' '-')"
+        gcloud compute images describe "$$img" \
+          --format='json(name,family,id,creationTimestamp,diskSizeGb,labels,status)' \
+          > /workspace/image-manifest.json
+        gcloud storage cp /workspace/image-manifest.json \
+          "gs://${PROJECT_ID}-winbuild-build/image-builds/${_IMAGE_VERSION}/image-manifest.json"
+        echo "image: $$img"
+        cat /workspace/image-manifest.json
+
+  # 4. If the build failed, make sure no builder VM was left running.
+  - id: sweep-on-failure
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        left=$$(gcloud compute instances list --filter="labels.owner=winbuild-ci AND labels.source=packer" \
+                --format='value(name,zone.basename())')
+        if [ -n "$$left" ]; then
+          echo "builder VM(s) survived a failed build:"; echo "$$left"
+          echo "$$left" | while read -r n z; do
+            gcloud compute instances delete "$$n" --zone="$$z" --quiet || true
+          done
+        fi
+        exit 0
+    waitFor: ["-"]
+
+  # 5. Always: report what exists, so the workflow can assert the image and nothing else.
+  - id: inventory
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        echo "== images"; gcloud compute images list --filter="name~^winbuild-app-" --format='table(name,status,creationTimestamp)'
+        echo "== builder instances"; gcloud compute instances list --filter="labels.source=packer" --format='table(name,zone.basename(),status)'
+    waitFor: ["packer-build"]

@@ -1,0 +1,6 @@
+# Everything needs review by the owner; the security-sensitive paths need it explicitly.
+*                       @Deck-J
+/infra/                 @Deck-J
+/packer/                @Deck-J
+/.github/workflows/     @Deck-J
+/bootstrap/          @Deck-J

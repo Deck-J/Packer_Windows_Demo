@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>WinBuild.SampleApp</AssemblyName>
+    <RootNamespace>WinBuild.SampleApp</RootNamespace>
+    <!-- CI passes -p:Version=...; a local build gets 0.0.0-local so /version is never blank. -->
+    <Version Condition="'$(Version)' == ''">0.0.0-local</Version>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <PackAsTool>false</PackAsTool>
+    <IsPackable>true</IsPackable>
+    <PackageId>WinBuild.SampleApp</PackageId>
+    <Authors>John Decker</Authors>
+    <Description>Sample application for the Windows build/deploy pipeline: /healthz, /version, X-Served-By.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The deployment payload: the published output is carried inside the package under payload/. -->
+    <Content Include="appsettings*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

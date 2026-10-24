@@ -1,0 +1,283 @@
+name: pipeline
+
+# build image → publish package → deploy 2 nodes → verify through the LB → destroy everything.
+#
+# Every job runs on a standard GitHub-hosted runner; the Windows work happens in GCP. Authentication is
+# Workload Identity Federation: no key, no long-lived token, nothing stored in this repository.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_image_build:
+        description: "Reuse the newest winbuild-app image instead of building one"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write        # required for OIDC → GCP
+  packages: write        # required for the NuGet push
+  attestations: write    # build provenance
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: false   # never cancel mid-run: teardown must be allowed to finish
+
+env:
+  VERSION: 0.0.0-ci.${{ github.run_number }}
+  IMAGE_VERSION: 0.0.0-ci-${{ github.run_number }}-${{ github.sha }}
+  RUN_ID: ${{ github.run_number }}
+
+jobs:
+  build-image:
+    name: build Windows image (Cloud Build + Packer)
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.out.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Stage the source archive for the image bake
+        id: src
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=repo/ -o source.zip HEAD
+          sha256sum source.zip | tee source.sha256
+          gcloud storage cp source.zip "gs://${{ vars.BUILD_BUCKET }}/source/${{ github.sha }}.zip"
+          echo "url=gs://${{ vars.BUILD_BUCKET }}/source/${{ github.sha }}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Cloud Build (Packer → Windows image)
+        if: ${{ !inputs.skip_image_build }}
+        run: |
+          set -euo pipefail
+          gcloud builds submit --config cloudbuild/image.yaml \
+            --substitutions="_IMAGE_VERSION=${IMAGE_VERSION},_APP_VERSION=${VERSION},_SOURCE_URL=${{ steps.src.outputs.url }},_BUILDER_SA=${{ vars.BUILDER_SA }},_ZONE=${{ vars.GCP_ZONE }}" \
+            --project "${{ vars.GCP_PROJECT }}" \
+            --async=false --format='value(id)'
+
+      - name: Resolve the image
+        id: out
+        run: |
+          set -euo pipefail
+          name="winbuild-app-$(echo "${IMAGE_VERSION}" | tr '.' '-')"
+          gcloud compute images describe "$name" --project "${{ vars.GCP_PROJECT }}" \
+            --format='value(name,status,creationTimestamp)' || {
+              echo "::error::image $name not found after Cloud Build"; exit 1; }
+          echo "image=projects/${{ vars.GCP_PROJECT }}/global/images/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Image manifest (evidence)
+        run: |
+          gcloud compute images describe "${{ steps.out.outputs.image }}" \
+            --format='json(name,id,creationTimestamp,diskSizeGb,labels)' > image-manifest.json
+          cat image-manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-manifest
+          path: image-manifest.json
+
+  publish:
+    name: publish package to GitHub Packages
+    runs-on: ubuntu-latest
+    needs: build-image
+    outputs:
+      nupkg: ${{ steps.pack.outputs.nupkg }}
+      sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Test
+        run: dotnet test src --configuration Release --nologo
+
+      - name: Pack
+        id: pack
+        run: |
+          set -euo pipefail
+          dotnet pack src/WinBuild.SampleApp -c Release -o out -p:Version="${VERSION}" --nologo
+          f=$(ls out/*.nupkg | head -1)
+          echo "nupkg=$f" >> "$GITHUB_OUTPUT"
+          echo "packed $f"
+
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: out
+          format: spdx-json
+          output-file: out/sbom.spdx.json
+
+      - name: Hash the exact bytes we will deploy
+        id: hash
+        run: sha256sum "${{ steps.pack.outputs.nupkg }}" | cut -d' ' -f1 | tee /tmp/sha | sed 's/^/sha256=/' >> "$GITHUB_OUTPUT"
+
+      - name: Push to GitHub Packages
+        run: |
+          set -euo pipefail
+          dotnet nuget push "${{ steps.pack.outputs.nupkg }}" \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
+
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ${{ steps.pack.outputs.nupkg }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: |
+            out/*.nupkg
+            out/sbom.spdx.json
+
+  stage-artifact:
+    name: stage the exact bytes for the nodes
+    runs-on: ubuntu-latest
+    needs: publish
+    outputs:
+      url: ${{ steps.up.outputs.url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: out
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify the bytes are the published ones, then upload
+        id: up
+        env:
+          EXPECTED: ${{ needs.publish.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          f=$(ls out/*.nupkg | head -1)
+          actual=$(sha256sum "$f" | cut -d' ' -f1)
+          [ "$actual" = "$EXPECTED" ] || { echo "::error::artifact changed between publish and staging"; exit 1; }
+          gs="gs://${{ vars.ARTIFACT_BUCKET }}/runs/${RUN_ID}/$(basename "$f")"
+          gcloud storage cp "$f" "$gs"
+          echo "url=$gs" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: deploy two nodes + load balancer
+    runs-on: ubuntu-latest
+    needs: [build-image, publish, stage-artifact]
+    outputs:
+      lb_ip: ${{ steps.tf.outputs.lb_ip }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: terraform init
+        run: terraform -chdir=infra init -input=false -backend-config="bucket=${{ vars.STATE_BUCKET }}"
+
+      - name: terraform apply
+        id: tf
+        env:
+          TF_IN_AUTOMATION: "1"
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra apply -auto-approve -input=false \
+            -var="project_id=${{ vars.GCP_PROJECT }}" \
+            -var="region=${{ vars.GCP_REGION }}" \
+            -var="zone_a=${{ vars.GCP_ZONE }}" \
+            -var="image=${{ needs.build-image.outputs.image }}" \
+            -var="node_service_account=${{ vars.NODE_SA }}" \
+            -var="app_version=${VERSION}" \
+            -var="package_url=${{ needs.stage-artifact.outputs.url }}" \
+            -var="package_sha256=${{ needs.publish.outputs.sha256 }}" \
+            -var="run_id=${RUN_ID}"
+          echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: verify through the load balancer
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Wait for both backends, then prove the path
+        env:
+          RUN_ID: ${{ github.run_number }}
+          VERSION: ${{ env.VERSION }}
+        run: |
+          set -euo pipefail
+          bash scripts/verify-through-lb.sh "${{ needs.deploy.outputs.lb_ip }}"
+
+  destroy:
+    name: destroy everything (always)
+    runs-on: ubuntu-latest
+    needs: [deploy, verify]
+    if: always() && needs.deploy.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: terraform destroy
+        run: |
+          terraform -chdir=infra init -input=false -backend-config="bucket=${{ vars.STATE_BUCKET }}"
+          terraform -chdir=infra destroy -auto-approve -input=false \
+            -var="project_id=${{ vars.GCP_PROJECT }}" -var="region=${{ vars.GCP_REGION }}" \
+            -var="zone_a=${{ vars.GCP_ZONE }}" -var="image=${{ needs.build-image.outputs.image }}" \
+            -var="node_service_account=${{ vars.NODE_SA }}" -var="app_version=${VERSION}" \
+            -var="package_url=unused" -var="package_sha256=unused" -var="run_id=${RUN_ID}"
+
+  audit:
+    name: prove nothing is left billing
+    runs-on: ubuntu-latest
+    needs: destroy
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Label sweep — ask GCP, do not trust state
+        env:
+          RUN_ID: ${{ github.run_number }}
+        run: bash scripts/assert-empty-project.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Run ${{ github.run_number }}"
+            echo "- image: \`${{ needs.build-image.outputs.image }}\`"
+            echo "- package: \`${{ needs.publish.outputs.nupkg }}\` (sha256 \`${{ needs.publish.outputs.sha256 }}\`)"
+            echo "- LB IP: \`${{ needs.deploy.outputs.lb_ip }}\`"
+            echo "- teardown: ${{ needs.destroy.result }}, audit: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

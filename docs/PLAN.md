@@ -42,20 +42,20 @@ GitHub (push to main / workflow_dispatch)
 │ GitHub Actions workflow  .github/workflows/pipeline.yml             │
 │  job build   → auth (WIF) → gcloud builds submit cloudbuild.image.yaml
 │  job publish → dotnet pack → GitHub Packages (nuget.pkg.github.com) │
-│  job deploy  → scripts/deploy.sh (2 nodes + LB + firewall, gcloud)  │
+│  job deploy  → terraform apply (network, 2 nodes, LB, firewall)     │
 │  job verify  → curl LB IP /healthz /version, backend health, 2 nodes │
-│  job destroy → scripts/destroy.sh  [if: always()]                   │
-│  job audit   → scripts/assert-empty-project.sh + billing check      │
+│  job destroy → terraform destroy   [if: always()]                   │
+│  job audit   → label sweep + assert-empty-project.sh + billing      │
 └─────────────────────────────────────────────────────────────────────┘
         │                                   ▲
         ▼                                   │ artifact transport
    Cloud Build (Linux workers)               │ (exact .nupkg bytes)
-   ├─ step: create builder VM  ──► Windows Server 2022 VM
+   ├─ step: packer build       ──► Windows Server 2022 VM (WinRM over IAP)
    │        startup-script installs Build Tools + SDK + .NET,
    │        builds the sample app, stages C:\app, writes status to GCS
-   ├─ step: poll status         ──► gs://<bucket>/image-build/<run>/status.json
-   ├─ step: gcloud compute images create winbuild-app-<version>
-   └─ step: delete builder VM (also on failure)
+   ├─ provisioners: install Build Tools + SDK + .NET + IIS, bake C:\app,
+   │                sysprep, shutdown
+   └─ packer captures winbuild-app-<version> and deletes the VM
                                              │
                               gs://<bucket>/artifacts/<version>/*.nupkg
                                              │
@@ -85,13 +85,19 @@ Three options were weighed:
 3. **Native Windows workers in Cloud Build** — not available for public pools. Rejected as
    unimplementable today; revisit if Google ships it.
 
-**Chosen: option 2.** The reasons are security-shaped, not preference: no WinRM listener, no password in
-a template, and the only control channel is an outbound HTTPS write to a bucket. Packer remains the
-documented alternative (ADR-0002) if the image later needs multi-cloud parity.
+**Chosen: option 1 (Packer), by owner's direction after reviewing the trade-off.** Packer is the
+declarative, tested path for this job: it owns the Windows lifecycle (autounattend, reboots, WinRM
+readiness, provisioning, sysprep, image capture, and cleanup on failure) that option 2 would require us to
+reimplement and maintain. The security objection is answered rather than ignored: **SSH runs over an IAP tunnel**
+(`use_iap = true`, `communicator = "ssh"`), so no management port is exposed to the internet, the
+firewall admits neither RDP nor SSH from anywhere, and the build uses a **per-build ed25519 keypair**
+generated inside Cloud Build, destroyed with the build and never written to the repo. The builder still needs an ephemeral external IP (or Cloud NAT) for Microsoft
+and NuGet downloads and for Windows activation — that is egress, not ingress.
 
-**Consequence to accept:** the startup script is now production code that must be versioned, tested and
-idempotent, and its logs are the build's primary evidence. It is treated as such (unit-tested PowerShell
-modules, `-ErrorAction Stop`, structured status JSON, retry-wrapped installers).
+**Consequence to accept:** the build depends on Packer's plugin (`googlecompute`) and on the Windows
+OpenSSH server behaving like OpenSSH; a Packer plugin pin is part of the image's reproducibility, exactly like the
+SDK pins. Provisioner scripts remain production code — versioned, `-ErrorAction Stop`, logged into the
+build output.
 
 ### 4.2 What the image contains
 
@@ -154,7 +160,7 @@ Proof that traffic went through the balancer, in order of strength:
 
 Teardown is a job, not a habit:
 
-1. **`scripts/destroy.sh`** in a `destroy` job with `if: always()` and its own
+1. **`terraform destroy -auto-approve`** in a `destroy` job with `if: always()` and its own
    `concurrency` group so it cannot be skipped by a cancelled sibling.
 2. **Inventory assertion**: `gcloud asset search-all-resources --project=<p>` filtered to
    `labels.owner=winbuild-ci` must return **nothing**; `compute instances|disks|addresses|
@@ -172,17 +178,17 @@ Teardown is a job, not a habit:
 
 | Standard | Mechanism in this repo | Evidence produced |
 |---|---|---|
-| IaC, no click-ops | Every GCP resource created by reviewed shell in `scripts/` and `image/`; no console changes | The scripts are the record; `--dry-run` prints the intended calls |
+| IaC, no click-ops | Terraform for every GCP resource, remote state in GCS with native locking, versioned bucket | `terraform plan` posted on the PR; state bucket versioned and access-controlled |
 | Change control | PR-only to `main`, required review, CODEOWNERS, conventional commits, linear history | Branch protection + PR template |
 | Least privilege | WIF, four narrowly-scoped service accounts (§4.5), no JSON keys | IAM policy doc + `gcloud projects get-iam-policy` snapshot in the run |
 | Secrets hygiene | No secrets in repo or image; `GITHUB_TOKEN` only; Secret Manager for anything else; push protection on | Secret-scanning alerts = 0 |
-| Policy as code | `shellcheck` on every script, `bash -n`, a `scripts/policy-check.sh` that refuses untagged resources, off-region zones, public IPs on nodes and non-`EXTERNAL_MANAGED` LB schemes | CI job that fails the PR |
+| Policy as code | `terraform fmt -check`, `validate`, `tflint`, `checkov`/`tfsec`, `conftest` for tagging and region rules, `packer validate`, `shellcheck` for the helper scripts | CI job that fails the PR |
 | Supply chain | SBOM (`syft` → SPDX), build provenance (`attest-build-provenance`), signed package, pinned action SHAs | Attestation attached to the package/release |
 | Code quality | `dotnet format --verify-no-changes`, analyzers as errors, unit + integration tests, `dotnet list package --vulnerable` | CI gates |
 | Dependency governance | Dependabot for NuGet and Actions; dependency review on PRs | Blocked PR on high severity |
 | Observability | Health endpoint, `/version`, structured logs to Cloud Logging, LB request logs, uptime check during the test window | Log links per run, retained 30 days |
 | Documentation | README, this plan, ADRs, runbook (`docs/RUNBOOK.md`), rollback (`docs/ROLLBACK.md`), cost model | Docs in-repo, reviewed with the code |
-| Environment separation | Separate projects or resource prefixes per environment; the workflow takes `env` as an input, and `prod` needs a reviewer and never auto-destroys | Environment protection rules |
+| Environment separation | Terraform workspaces per environment with separate state prefixes and tfvars; `prod` needs a reviewer and never auto-destroys | Environment protection rules + workspace in the plan output |
 | Naming and tagging | `<project>-<env>-<component>-<n>`; every resource labelled `owner`, `env`, `cost-centre`, `ttl` | `conftest` policy denies untagged resources |
 | Resilience | Two nodes in two zones, health-checked, LB retries; the app is stateless in test | Backend health shows 2/2 during the test |
 | Rollback | Redeploy the previous package version; pin the image by name instead of family; re-run `deploy.sh` at the previous tag | Runbook step with exact commands |
@@ -194,12 +200,12 @@ Each stage has an exit criterion that is a command, not an opinion.
 | Stage | What is built | Exit criterion |
 |---|---|---|
 | **S0 Bootstrap** (half day) | GCP project, billing, APIs enabled (`compute`, `cloudbuild`, `storage`, `iam`, `logging`, `secretmanager`, `billingbudgets`), state bucket, WIF pool + provider, four service accounts, budgets and CPU quota | `gcloud builds list` works from a locally-authenticated shell; WIF token exchange succeeds from a test workflow |
-| **S1 Repo skeleton** (half day) | Repo layout (§6), branch protection, CODEOWNERS, PR template, ADR-0001..0005, `shellcheck` + `bash -n` + policy check in CI | PR with the skeleton passes all CI jobs; `scripts/deploy.sh --dry-run` prints a clean intended action list against an empty project |
+| **S1 Repo skeleton** (half day) | Repo layout (§6), branch protection, CODEOWNERS, PR template, ADR-0001..0006, `terraform fmt/validate` + `tflint` + `checkov` + `packer validate` + `shellcheck` in CI | PR with the skeleton passes all CI jobs; `terraform plan` against the empty project is clean |
 | **S2 Image build** (2–3 days) | `cloudbuild.image.yaml`, `image/startup.ps1` + modules, status handshake, image naming, failure cleanup | A run produces `winbuild-app-<version>` and `C:\app` answers `GET /healthz` on the builder VM before imaging; a deliberately broken script leaves **no** VM behind |
 | **S3 Publish** (1 day) | `dotnet pack`, versioning, push to GitHub Packages, SBOM + attestation, sha256 recorded as a run output | Package visible in Packages with the SBOM; `dotnet nuget push` of the same version fails (immutability proven) |
-| **S4 Deploy** (2 days) | `scripts/deploy.sh`: network, firewall, image pinning, 2 nodes, LB, health check; readiness poll on backend health | `scripts/deploy.sh` yields an LB IP that returns `200 ok` from the runner, with both backends healthy inside 10 minutes |
+| **S4 Deploy** (2 days) | Terraform: network, firewall, image pinning, 2 nodes (MIG), LB, health check; readiness poll on backend health outside Terraform | `terraform apply` yields an LB IP that returns `200 ok` from the runner, with both backends healthy inside 10 minutes |
 | **S5 Verify** (1 day) | The reachability test: retries, version assertion, `X-Served-By` both-nodes assertion, backend health | Test fails when one node is stopped (negative test) and passes with two — both runs recorded |
-| **S6 Teardown** (1 day) | `scripts/destroy.sh`, `scripts/assert-empty-project.sh`, billing reconciliation, janitor | After a green run and after a deliberately failed run, the inventory is empty and the janitor has nothing to delete |
+| **S6 Teardown** (1 day) | `terraform destroy`, the label sweep (`assert-empty-project.sh`) as an independent check, billing reconciliation, janitor | After a green run and after a deliberately failed run, the inventory is empty and the janitor has nothing to delete |
 | **S7 Hardening** (2 days) | Policy-as-code, vulnerability gates, runbook, ADRs completed, cost review, `prod` environment gates | A PR that adds an untagged resource is refused by `conftest`; a PR with a high-severity package is refused by dependency review |
 
 Realistic total: **8–10 working days** for one engineer who knows GCP and Windows, with the image build and the
@@ -226,11 +232,8 @@ src/
 bootstrap/
   00-bootstrap.sh                 one-time: APIs, buckets, SAs, WIF, budget, quota
 scripts/
-  lib/common.sh                   idempotent ensure_* helpers (network, node, LB, readiness)
-  deploy.sh  destroy.sh           the run
-  verify-through-lb.sh            the reachability proof
-  assert-empty-project.sh         the teardown proof
-  policy-check.sh                 refuses untagged/off-region/public-IP resources
+  verify-through-lb.sh            the reachability proof (runs after terraform apply)
+  assert-empty-project.sh         label sweep: what Terraform's state might have forgotten
 image/
   node-startup.ps1                what a deployed node runs (pull package, install, serve)
 docs/
@@ -276,22 +279,21 @@ The number that matters: an idle project costs **cents**, and a leaked Windows V
 7. **Licensing** — Build Tools vs Community (§2.2) needs a written decision from whoever owns Microsoft
    licensing, not an engineering default.
 
-## 9. Why not Terraform or Packer (for now)
+## 9. Why Terraform and Packer
 
-Deliberate, recorded in `docs/adr/0005-no-terraform-no-packer.md`:
+Recorded in `docs/adr/0006-adopt-terraform-and-packer.md`, superseding ADR-0005.
 
-- **No Terraform** means no state file, so nothing can drift silently — every script is an
-  "ensure-or-create" call, and destruction works from labels rather than state. What is lost: a plan that
-  diffs desired against actual, resource-level dependency ordering, and cheap import of hand-made
-  resources. What replaces it: idempotent `ensure_*` helpers, `--dry-run` printing the exact gcloud calls,
-  and `assert-empty-project.sh` proving nothing survives. The scripts are written so a later Terraform
-  migration can wrap them rather than rewrite them.
-- **No Packer** means the image is built by Cloud Build orchestrating a Windows VM with a PowerShell
-  state machine. What is lost: Packer's provisioner ecosystem and multi-cloud parity. What replaces it: no
-  inbound WinRM port, no password in a template, and a script that can be run by hand on a scratch VM
-  while it is being developed.
+The earlier decision was script-based infrastructure and a hand-rolled Windows build, to avoid the
+toolchain. After review the owner reversed it, and the reasons are the ones that make Terraform earn its
+place: **plan** (a diff of desired against actual, reviewed on the PR, which is the only review that
+catches an untagged or off-region resource), **dependency ordering** (deletion order computed, not
+hand-coded), **drift detection**, **import**, and **modules per environment**. Packer earns its place
+because the Windows image lifecycle — autounattend, reboots, WinRM readiness, provisioning, sysprep,
+capture, cleanup — is a solved problem there and a maintenance burden here.
 
-Both are reversible decisions, and both are revisited if the project grows past one environment.
+What that does not change: the reachability proof, the label sweep, the billing reconciliation and the
+janitor all stay. Terraform's teardown is only as good as its state file, so the independent check that
+asks GCP what exists remains the stronger half of the teardown argument.
 
 ## 10. Definition of done
 
@@ -306,8 +308,10 @@ Both are reversible decisions, and both are revisited if the project grows past 
 
 ## 11. Build order (first two days, concretely)
 
-1. `bootstrap/00-bootstrap.sh` run once through the `bootstrap` workflow, recorded in `docs/RUNBOOK.md`.
-2. Repo skeleton with CI passing (shellcheck, `bash -n`, policy check) and a "hello" sample app.
+1. `bootstrap/00-bootstrap.sh` run once through the `bootstrap` workflow (it already creates the state
+   bucket the Terraform backend needs), recorded in `docs/RUNBOOK.md`.
+2. Repo skeleton with CI passing (`terraform fmt/validate`, `tflint`, `checkov`, `packer validate`,
+   `shellcheck`) and a "hello" sample app.
 3. `image/startup.ps1` against a manually created VM until `Get-Content C:\app\status.json` says
    `{"stage":"done"}` — the script is proven before Cloud Build touches it.
 4. Only then wire Cloud Build, then publish, then deploy, then verify, then destroy.

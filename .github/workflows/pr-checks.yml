@@ -1,0 +1,128 @@
+name: pr-checks
+
+# Everything that can be checked without a cloud credential runs here, on every PR. The Terraform plan
+# runs only for branches in this repository (not forks), because it needs OIDC.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  infra:
+    name: terraform fmt / validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: fmt
+        run: terraform -chdir=infra fmt -check -recursive
+      - name: validate
+        run: |
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate
+
+  tflint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - run: |
+          tflint --init --chdir=infra
+          tflint --chdir=infra --format compact
+
+  policy:
+    name: policy (checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra
+          framework: terraform
+          quiet: true
+          soft_fail: false
+          # Costs nothing to check; the two suppressions are deliberate and documented in docs/THREAT-MODEL.md.
+          skip_check: CKV_GCP_2,CKV_GCP_62
+
+  labels:
+    name: resource labels and regions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: every resource carries owner/run/ttl
+        run: |
+          set -euo pipefail
+          bash scripts/policy-check.sh
+
+  packing:
+    name: packer fmt / validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: "1.11.2"
+      - run: |
+          packer init packer
+          packer fmt -check -recursive packer
+          packer validate \
+            -var project_id=example -var service_account_email=sa@example.iam.gserviceaccount.com \
+            -var winrm_password=not-a-real-password -var image_version=0.0.0-ci-1-abc1234 \
+            -var app_version=0.0.0-ci.1 packer
+
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "./scripts ./bootstrap"
+
+  dotnet:
+    name: build / test / format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: dotnet format src --verify-no-changes
+      - run: dotnet build src -c Release --nologo -warnaserror
+      - run: dotnet test src -c Release --nologo
+
+  plan:
+    name: terraform plan
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - name: plan
+        run: |
+          terraform -chdir=infra init -input=false -backend-config="bucket=${{ vars.STATE_BUCKET }}"
+          terraform -chdir=infra plan -input=false -no-color \
+            -var="project_id=${{ vars.GCP_PROJECT }}" -var="node_service_account=${{ vars.NODE_SA }}" \
+            -var="app_version=plan-only" -var="package_url=plan-only" \
+            -var="package_sha256=plan-only" -var="run_id=plan-${{ github.run_number }}" \
+            | tail -40

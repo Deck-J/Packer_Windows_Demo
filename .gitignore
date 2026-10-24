@@ -1,0 +1,22 @@
+# Local Terraform working data (state lives in the GCS bucket, never here)
+infra/.terraform/
+infra/.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Packer
+packer/manifest.json
+packer/*.log
+
+# .NET
+bin/
+obj/
+*.user
+
+# Outputs of a local run
+lb-ip.txt
+/tmp/
+.env
+.env.*
