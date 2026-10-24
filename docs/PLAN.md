@@ -50,7 +50,7 @@ GitHub (push to main / workflow_dispatch)
         │                                   ▲
         ▼                                   │ artifact transport
    Cloud Build (Linux workers)               │ (exact .nupkg bytes)
-   ├─ step: packer build       ──► Windows Server 2022 VM (WinRM over IAP)
+   ├─ step: packer build       ──► Windows Server 2022 VM (SSH over IAP, no WinRM)
    │        startup-script installs Build Tools + SDK + .NET,
    │        builds the sample app, stages C:\app, writes status to GCS
    ├─ provisioners: install Build Tools + SDK + .NET + IIS, bake C:\app,
@@ -75,9 +75,10 @@ Each decision gets an ADR in `docs/adr/` at implementation time; the reasoning i
 
 Three options were weighed:
 
-1. **Packer with the `googlecompute` builder** — standard, declarative, idempotent, but needs inbound
-   WinRM/SSH to the builder VM and a baked password, i.e. a management plane exposed for the duration of
-   the build.
+1. **Packer with the `googlecompute` builder** — standard, declarative, idempotent, but needs a remote
+   shell to the builder VM plus a credential, i.e. a management plane exposed for the duration of
+   the build. How that shell is secured is the difference between options 1 and 2, and SSH-over-IAP is what
+   makes option 1 acceptable (see §4.1.1).
 2. **Cloud Build orchestrating a temporary VM** — `gcloud compute instances create` with
    `windows-startup-script-ps1` metadata; the script installs, builds and writes a status object to GCS;
    a Cloud Build step polls that object; `gcloud compute images create` snapshots the boot disk; the VM
@@ -86,13 +87,48 @@ Three options were weighed:
    unimplementable today; revisit if Google ships it.
 
 **Chosen: option 1 (Packer), by owner's direction after reviewing the trade-off.** Packer is the
-declarative, tested path for this job: it owns the Windows lifecycle (autounattend, reboots, WinRM
-readiness, provisioning, sysprep, image capture, and cleanup on failure) that option 2 would require us to
+declarative, tested path for this job: it owns the Windows lifecycle (autounattend, restart handling,
+remote-shell readiness, provisioning, sysprep, image capture, and cleanup on failure) that option 2 would require us to
 reimplement and maintain. The security objection is answered rather than ignored: **SSH runs over an IAP tunnel**
 (`use_iap = true`, `communicator = "ssh"`), so no management port is exposed to the internet, the
 firewall admits neither RDP nor SSH from anywhere, and the build uses a **per-build ed25519 keypair**
 generated inside Cloud Build, destroyed with the build and never written to the repo. The builder still needs an ephemeral external IP (or Cloud NAT) for Microsoft
 and NuGet downloads and for Windows activation — that is egress, not ingress.
+
+### 4.1.1 Transport: SSH, and WinRM is not an option
+
+Recorded as [`docs/adr/0007-ssh-not-winrm.md`](adr/0007-ssh-not-winrm.md).
+
+| | SSH (chosen) | WinRM (rejected) |
+|---|---|---|
+| Credential | ed25519 keypair generated per build, destroyed with it | a password that must exist, be transported and be rotated |
+| Exposure | port 22 from the IAP range `35.235.240.0/20` only | 5985/5986 — unencrypted, or self-signed TLS, on the same range |
+| Auth surface | OpenSSH Server, PowerShell as the default shell | WinRM listener typically configured with Basic + AllowUnencrypted to work at all on a fresh image |
+| Where the secret lives | `administrators_authorized_keys`, ACL-restricted to Administrators + SYSTEM | a Packer variable, a build step, or the instance metadata |
+| Failure mode when misconfigured | no login — safe | login works unencrypted, or an opaque handshake error |
+
+Mechanics, in order:
+
+1. Cloud Build runs `ssh-keygen -t ed25519` into `/workspace`, mode 600, never printed.
+2. The public half goes into instance metadata (`ssh-keys`); the private half reaches Packer as a sensitive
+   variable.
+3. The specialize script installs `OpenSSH.Server`, sets `DefaultShell` to PowerShell, writes the key into
+   `C:\ProgramData\ssh\administrators_authorized_keys`, applies `icacls /inheritance:r` (Administrators,
+   SYSTEM), restarts `sshd`, and admits port 22 only for `35.235.240.0/20`.
+4. Packer connects with `communicator = "ssh"` and `use_iap = true`, so the session is tunnelled through
+   IAP: no public SSH port exists even while the build runs.
+5. Both key halves are shredded at the end of the Cloud Build step, before the step can report success.
+
+**The two SSH constraints that shape the provisioning scripts**
+
+- **No mid-build restart.** `windows-restart` is a WinRM-era provisioner; over SSH a restart drops the
+  connection. Every installer therefore runs with `--norestart` (exit code 3010 accepted), and the only
+  machine stop is sysprep at the very end, which is meant to terminate the build.
+- **No `elevated_user`/`elevated_password`.** The build user is a local administrator, so elevation is
+  implicit; those provisioner fields are unreliable over SSH and are left unset.
+
+If a future step genuinely needs a restart mid-build, the correct response is a second build block (or a
+reconnect attempt), not a return to WinRM.
 
 **Consequence to accept:** the build depends on Packer's plugin (`googlecompute`) and on the Windows
 OpenSSH server behaving like OpenSSH; a Packer plugin pin is part of the image's reproducibility, exactly like the
@@ -288,7 +324,7 @@ toolchain. After review the owner reversed it, and the reasons are the ones that
 place: **plan** (a diff of desired against actual, reviewed on the PR, which is the only review that
 catches an untagged or off-region resource), **dependency ordering** (deletion order computed, not
 hand-coded), **drift detection**, **import**, and **modules per environment**. Packer earns its place
-because the Windows image lifecycle — autounattend, reboots, WinRM readiness, provisioning, sysprep,
+because the Windows image lifecycle — autounattend, restart handling, remote-shell readiness, provisioning, sysprep,
 capture, cleanup — is a solved problem there and a maintenance burden here.
 
 What that does not change: the reachability proof, the label sweep, the billing reconciliation and the
