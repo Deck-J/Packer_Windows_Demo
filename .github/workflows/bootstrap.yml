@@ -1,0 +1,118 @@
+name: bootstrap
+
+# One-time project bootstrap — run manually, once. Creates the APIs, state bucket, service accounts,
+# Workload Identity pool/provider, quotas and budget that the pipeline then uses for ever after.
+#
+# There is a chicken-and-egg here that no amount of automation removes: Workload Identity Federation is
+# what lets Actions authenticate to GCP, so it cannot also be what authenticates the job that creates it.
+# Rather than a service-account key (a long-lived secret, and an audit finding), this workflow takes a
+# SHORT-LIVED access token: in Cloud Shell run `gcloud auth print-access-token`, save it as the
+# repository secret GCP_BOOTSTRAP_TOKEN, dispatch this workflow, then delete the secret. The token expires
+# within the hour whether or not it is deleted.
+#
+# The `bootstrap` environment should have required reviewers so this cannot be dispatched silently.
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "GCP project ID (must already exist, with billing linked)"
+        required: true
+      billing_account:
+        description: "Billing account ID, e.g. 01AB23-CD45EF-678901"
+        required: true
+      region:
+        description: "Region for buckets and nodes"
+        required: false
+        default: us-central1
+      budget_usd:
+        description: "Monthly budget in USD"
+        required: false
+        default: "25"
+      confirm:
+        description: "Type BOOTSTRAP to confirm"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main' && inputs.confirm == 'BOOTSTRAP'
+    runs-on: ubuntu-latest
+    environment: bootstrap
+    env:
+      CLOUDSDK_AUTH_ACCESS_TOKEN: ${{ secrets.GCP_BOOTSTRAP_TOKEN }}
+      CLOUDSDK_CORE_PROJECT: ${{ inputs.project_id }}
+      PROJECT_ID: ${{ inputs.project_id }}
+      BILLING_ACCOUNT: ${{ inputs.billing_account }}
+      REGION: ${{ inputs.region }}
+      BUDGET_AMOUNT: ${{ inputs.budget_usd }}
+      GITHUB_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: "beta"
+
+      - name: Refuse to run with a service-account key
+        run: |
+          if [ -n "${{ secrets.GCP_SA_KEY }}" ]; then
+            echo "::error::A GCP_SA_KEY secret exists. This project does not use keys - delete it and use the"
+            echo "::error::short-lived token instead."
+            exit 1
+          fi
+          echo "no key secret present: good"
+
+      - name: Who am I (and what am I allowed to do)
+        run: |
+          gcloud auth list --format='value(account)'
+          gcloud projects describe "$PROJECT_ID" --format='value(projectNumber,lifecycleState)'
+
+      - name: Bootstrap
+        run: bash bootstrap/00-bootstrap.sh
+
+      - name: Publish the values
+        run: |
+          echo "### Bootstrap complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "Set these as **repository variables** (Settings → Secrets and variables → Actions → Variables):" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/bootstrap-values.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Then **delete the \`GCP_BOOTSTRAP_TOKEN\` secret**." >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    # Proves the bootstrap worked by doing what the pipeline will do: exchange a GitHub OIDC token for
+    # credentials and impersonate the deployer service account. No key, no user token.
+    needs: bootstrap
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deployer identity works
+        run: |
+          set -euo pipefail
+          acct=$(gcloud auth list --filter=status:ACTIVE --format='value(account)')
+          echo "authenticated as: $acct"
+          case "$acct" in
+            *"${{ vars.DEPLOYER_SA }}"*) echo "impersonation OK" ;;
+            *) echo "::error::authenticated as $acct, expected the deployer service account"; exit 1 ;;
+          esac
+          gcloud compute instances list --project="${{ vars.GCP_PROJECT }}" --format='value(name)' | head -5
+          gcloud storage ls "gs://${{ vars.STATE_BUCKET }}/" >/dev/null && echo "state bucket readable"
