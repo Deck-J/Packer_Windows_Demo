@@ -117,9 +117,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
-      - run: dotnet format src --verify-no-changes
-      - run: dotnet build src -c Release --nologo -warnaserror
-      - run: dotnet test src -c Release --nologo
+      - run: dotnet format WinBuild.sln --verify-no-changes
+      - run: dotnet build WinBuild.sln -c Release --nologo -warnaserror
+      - run: dotnet test WinBuild.sln -c Release --nologo
 
   plan:
     name: terraform plan

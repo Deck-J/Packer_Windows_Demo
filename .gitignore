@@ -13,6 +13,8 @@ packer/*.log
 # .NET
 bin/
 obj/
+TestResults/
+*.trx
 *.user
 
 # Outputs of a local run

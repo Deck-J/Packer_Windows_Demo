@@ -108,7 +108,7 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Test
-        run: dotnet test src --configuration Release --nologo
+        run: dotnet test WinBuild.sln --configuration Release --nologo
 
       - name: Pack
         id: pack
