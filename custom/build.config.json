@@ -28,6 +28,11 @@
       "timeoutSeconds": 300
     },
     {
+      "name": "validation-suite",
+      "command": "& 'C:\\packer\\custom\\tests\\run-tests.ps1' -Phase build -ExpectedVersion $env:APP_VERSION",
+      "timeoutSeconds": 1800
+    },
+    {
       "name": "optional-static-analysis",
       "command": "& dotnet format C:\\packer\\src\\src\\WinBuild.SampleApp --verify-no-changes",
       "timeoutSeconds": 900,

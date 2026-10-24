@@ -3,7 +3,7 @@
   Warnings are errors, and the version comes from the pipeline so /version can be asserted later.
 #>
 $ErrorActionPreference = 'Stop'
-$src = 'C:\packer\src\src\WinBuild.SampleApp'
+$src = 'C:\packer\src\WinBuild.SampleApp'
 $out = 'C:\app\custom'
 $version = if ($env:APP_VERSION) { $env:APP_VERSION } else { '0.0.0-local' }
 $nuget = 'C:\packer\custom\NuGet.Config'

@@ -26,7 +26,13 @@ if (-not (Test-Path $src)) {
 }
 
 Log "publishing from $src at version $env:APP_VERSION"
-& 'C:\Program Files\dotnet\dotnet.exe' publish (Join-Path $src 'src\WinBuild.SampleApp') `
+$proj = @(
+  (Join-Path $src 'WinBuild.SampleApp'),
+  (Join-Path $src 'src\WinBuild.SampleApp'),
+  (Join-Path $src 'repo\src\WinBuild.SampleApp')
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $proj) { Log "no project under $src - skipping baked copy"; exit 0 }
+& 'C:\Program Files\dotnet\dotnet.exe' publish $proj `
   -c Release -o 'C:\app\baked' -p:Version=$env:APP_VERSION --nologo
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 Log "baked copy published to C:\app\baked"

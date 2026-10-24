@@ -38,6 +38,28 @@ That last point is the shape of the thing: the image carries the *capability* (a
 7-Zip, jq, NuGet, gcloud); `custom/` carries the *decisions* (which app, which pool, which environment,
 which checks).
 
+## Tests — `tests/`
+
+`tests/run-tests.ps1` is the validation entrypoint, and it runs the **same suite in two phases**:
+
+| phase | where | what runs |
+|---|---|---|
+| `build` | on the builder, after the site is configured | `dotnet test` + IIS configuration checks + the app contract against `http://localhost` |
+| `deploy` | on the runner, against the load-balancer address | the app contract, plus a distribution check that at least two nodes answer |
+
+Because it is one script in both phases, "it worked on the builder" and "it works behind the LB" cannot
+drift apart. Exit code is non-zero if any check fails, so the image build or the verify job fails.
+
+Adding a check is adding a file: `tests/30-your-check.Tests.ps1` with the same `param` block, using the
+`Assert-*` helpers from `tests/Assert.ps1` (no Pester — the builder should not need a module installed to
+run its own tests). The filename prefix sets the order.
+
+The shipped checks, in plain terms: `/healthz` returns `ok`; `/version` equals the version that was
+published; every response carries `X-Served-By` and no `X-Powered-By`; unknown routes 404; the app answers
+inside 3 s; the IIS site exists, is started, serves `C:\app\custom` from its own pool with no managed
+runtime and an ApplicationPoolIdentity; `web.config` parses and declares out-of-process hosting; the
+stdout log directory exists; and — in the deploy phase — at least two distinct nodes answer.
+
 ## Adding your own
 
 1. Write a script in `scripts/`, take no arguments, throw on failure, and print what it did.

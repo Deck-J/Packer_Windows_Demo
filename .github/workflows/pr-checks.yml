@@ -80,6 +80,26 @@ jobs:
             -var winrm_password=not-a-real-password -var image_version=0.0.0-ci-1-abc1234 \
             -var app_version=0.0.0-ci.1 packer
 
+  powershell:
+    name: powershell parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: every .ps1 parses
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors -and $errors.Count -gt 0) {
+              $bad++
+              Write-Host "::error file=$($_.FullName)::$($errors[0].Message)"
+            }
+          }
+          if ($bad -gt 0) { throw "$bad PowerShell file(s) have parse errors" }
+          Write-Host "all PowerShell files parse"
+
   shell:
     name: shellcheck
     runs-on: ubuntu-latest
