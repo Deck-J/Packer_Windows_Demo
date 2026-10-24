@@ -66,6 +66,17 @@ from the build status rather than inferred from the log. See [`docs/RUNBOOK.md`]
 image can do an IDE build" is a log file rather than a claim — skipped, honestly, on a Build Tools image. For a
 `.vdproj` MSI it needs the IDE plus the Installer Projects extension: see [`demo/README.md`](demo/README.md).
 
+## It is a framework, not a script
+
+- **`projects/<app>.yaml`** — one file per application: solution, tests, artifact, deploy shape, image needs.
+  `bin/validate-projects.py` checks both the schema *and* that the paths exist, and CI enforces it.
+- **`profiles/`** — `windows-iis`, `windows-service`, `installer-vdproj`, `library`: the shape of a build.
+- **`custom/`** — the ordered steps and the validation suite, when the profile is not enough.
+- **`bin/new-project.sh`** — scaffold a new application definition in one command.
+
+See [`docs/EXTENDING.md`](docs/EXTENDING.md) for the three extension points and for what is deliberately *not*
+abstracted (the toolchain, the topology, and secrets).
+
 ## Two things you can change without touching the pipeline
 
 **Your own build.** `custom/` is the contract: `custom/run.ps1` executes the steps listed in

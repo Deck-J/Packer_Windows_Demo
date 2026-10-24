@@ -54,6 +54,17 @@ jobs:
           # Costs nothing to check; the two suppressions are deliberate and documented in docs/THREAT-MODEL.md.
           skip_check: CKV_GCP_2,CKV_GCP_62
 
+  projects:
+    name: project definitions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: python3 bin/validate-projects.py
+
   labels:
     name: resource labels and regions
     runs-on: ubuntu-latest

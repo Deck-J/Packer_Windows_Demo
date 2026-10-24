@@ -1,0 +1,10 @@
+# Profile: a .vdproj installer MSI, which needs the IDE and the out-of-proc switch.
+name: installer-vdproj
+summary: "Build a Visual Studio Installer project into an MSI; publish it as a release asset."
+build_steps:
+  - custom/scripts/25-devenv-build.ps1
+validate_scripts:
+  - custom/scripts/27-verify-msi.ps1
+requires:
+  image: [vs_edition >= community, installer-projects-vsix]
+  build: [vs_disable_out_of_proc_build = true]

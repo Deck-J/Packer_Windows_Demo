@@ -1,0 +1,13 @@
+# Profile: a background service (Windows Service) rather than a web app.
+name: windows-service
+summary: "Install the published app as a Windows service, verify the service is running and the health endpoint answers locally."
+build_steps:
+  - custom/scripts/10-nuget-config.ps1
+  - custom/scripts/20-build.ps1
+deploy_scripts:
+  - custom/scripts/50-install-service.ps1
+validate_scripts:
+  - custom/tests/run-tests.ps1
+requires:
+  image: [dotnet-runtime]
+  node: [service account can start services]

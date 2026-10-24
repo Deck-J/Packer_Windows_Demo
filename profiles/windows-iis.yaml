@@ -1,0 +1,14 @@
+# Profile: an ASP.NET Core app served by IIS on the node.
+name: windows-iis
+summary: "Publish a web app, create an app pool and site, verify /healthz through the load balancer."
+build_steps:
+  - custom/scripts/10-nuget-config.ps1
+  - custom/scripts/20-build.ps1
+deploy_scripts:
+  - custom/scripts/30-configure-iis.ps1
+validate_scripts:
+  - custom/scripts/40-verify.ps1
+  - custom/tests/run-tests.ps1
+requires:
+  image: [iis, aspnetcore-hosting-bundle]
+  node: [port 80, no external IP]

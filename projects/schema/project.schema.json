@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project build definition",
+  "description": "One file per application. The pipeline reads these instead of hard-coding a single app, which is what makes this a framework rather than a demo.",
+  "type": "object",
+  "required": ["name", "profile", "solution", "artifact", "deploy"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,40}$"},
+    "description": {"type": "string"},
+    "profile": {
+      "type": "string",
+      "enum": ["windows-iis", "windows-service", "installer-vdproj", "library"],
+      "description": "Which build/deploy shape applies. See profiles/."
+    },
+    "solution": {"type": "string", "description": "Path to the .sln or .csproj, relative to the repo root."},
+    "tests": {"type": "string", "description": "Path to the test project, if any."},
+    "target_framework": {"type": "string"},
+    "artifact": {
+      "type": "object",
+      "required": ["type", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string", "enum": ["nuget", "msi", "zip"]},
+        "id": {"type": "string"},
+        "include_symbols": {"type": "boolean"},
+        "sbom": {"type": "boolean"}
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "required": ["targets"],
+      "additionalProperties": false,
+      "properties": {
+        "targets": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["iis", "service", "none"]}},
+        "iis": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "site": {"type": "string"},
+            "app_pool": {"type": "string"},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            "health_path": {"type": "string"},
+            "version_path": {"type": "string"},
+            "physical_path": {"type": "string"}
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {"type": "string"},
+            "display_name": {"type": "string"},
+            "start_mode": {"type": "string", "enum": ["auto", "manual", "disabled"]}
+          }
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vs_edition": {"type": "string", "enum": ["buildtools", "community", "professional", "enterprise"]},
+        "vs_workloads": {"type": "array", "items": {"type": "string"}},
+        "dotnet_channel": {"type": "string"},
+        "use_devenv": {"type": "boolean", "description": "Build with the IDE rather than MSBuild/dotnet."},
+        "disable_out_of_proc": {"type": "boolean"},
+        "extra_steps": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expect_otel": {"type": "boolean"},
+        "required_checks": {"type": "array", "items": {"type": "string"}},
+        "smoke_paths": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# One application, described declaratively. bin/validate-projects.py checks this against the schema, and the
+# pipeline reads it instead of hard-coding paths. Copy it (or run bin/new-project.sh) to add another app.
+name: sample-app
+description: "Demo ASP.NET Core service — /healthz, /version, /telemetry, X-Served-By, OpenTelemetry"
+profile: windows-iis
+solution: src/WinBuild.SampleApp/WinBuild.SampleApp.csproj
+tests: src/WinBuild.SampleApp.Tests/WinBuild.SampleApp.Tests.csproj
+target_framework: net8.0
+
+artifact:
+  type: nuget
+  id: WinBuild.SampleApp
+  include_symbols: true
+  sbom: true
+
+deploy:
+  targets: [iis]
+  iis:
+    site: WinBuildApp
+    app_pool: WinBuildApp
+    port: 80
+    physical_path: C:\app\custom
+    health_path: /healthz
+    version_path: /version
+
+build:
+  vs_edition: enterprise
+  dotnet_channel: "8.0"
+  use_devenv: true
+  disable_out_of_proc: true
+  extra_steps:
+    - custom/scripts/26-msbuild-demo.ps1
+  vs_workloads:
+    - Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools
+    - Microsoft.VisualStudio.Workload.NativeDesktopBuildTools
+    - Microsoft.Net.Component.4.8.TargetingPack
+
+validation:
+  expect_otel: true
+  required_checks:
+    - healthz
+    - version
+    - distributed
+  smoke_paths:
+    - /healthz
+    - /version
+    - /telemetry
+    - /demo/checkout
