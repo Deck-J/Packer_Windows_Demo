@@ -23,26 +23,57 @@ function Check($exe, $exeArgs = @()) {
     }
 }
 
-Log "install starting (BuildTools $env:BUILDTOOLS_VERSION, .NET $env:DOTNET_CHANNEL)"
+Log "install starting (VS edition $env:VS_EDITION, .NET $env:DOTNET_CHANNEL)"
 
 # --- TOOLCHAIN ---------------------------------------------------------------
-Log "Visual Studio Build Tools (the toolchain licensed for build agents, not the IDE)"
-$vs = 'C:\packer\vs_buildtools.exe'
-Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_buildtools.exe' -OutFile $vs -UseBasicParsing
-$args = @(
-  '--quiet', '--wait', '--norestart', '--nocache',
-  '--installPath', 'C:\BuildTools',
-  '--add', 'Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools',
-  '--add', 'Microsoft.VisualStudio.Workload.NativeDesktopBuildTools',
-  '--add', 'Microsoft.VisualStudio.Component.Windows11SDK.22621',
-  '--add', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-  '--includeRecommended'
-)
-Log "installing Build Tools (this is the slow step: 15-30 minutes)"
-$p = Start-Process -FilePath $vs -ArgumentList $args -Wait -PassThru
-if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "Build Tools installer failed with $($p.ExitCode)" }
-Log "Build Tools installed (exit $($p.ExitCode))"
-Check 'C:\BuildTools\MSBuild\Current\Bin\MSBuild.exe' '-version'
+# Visual Studio: Build Tools by default, the full IDE when a project genuinely needs it.
+#
+# Build Tools covers almost everything a build server does - MSBuild, the Windows SDK, the compiler - and is
+# the correct licence for an unattended agent. Some project types are only buildable with the IDE installed
+# because their MSBuild tasks or workloads ship with Visual Studio itself or with a VSIX extension:
+#   * UWP / WinUI, MAUI (Android/iOS), Office and VSTO add-ins, SSDT/SSIS/SSRS, Windows Application Packaging
+#     (MSIX) projects, and driver projects that depend on IDE-integrated tooling.
+# If the build fails with "the task X was not found" or a missing workload SDK, that is the signal to switch
+# edition rather than to guess.
+$edition = if ($env:VS_EDITION) { $env:VS_EDITION.ToLower() } else { 'buildtools' }
+$bootstrappers = @{
+    'buildtools'   = 'https://aka.ms/vs/17/release/vs_buildtools.exe'
+    'community'    = 'https://aka.ms/vs/17/release/vs_community.exe'
+    'professional' = 'https://aka.ms/vs/17/release/vs_professional.exe'
+    'enterprise'   = 'https://aka.ms/vs/17/release/vs_enterprise.exe'
+}
+if (-not $bootstrappers.ContainsKey($edition)) { throw "VS_EDITION '$edition' is not one of: $($bootstrappers.Keys -join ', ')" }
+$installPath = if ($edition -eq 'buildtools') { 'C:\BuildTools' } else { 'C:\Program Files\Microsoft Visual Studio\2022\' + (Get-Culture).TextInfo.ToTitleCase($edition) }
+Log "Visual Studio edition: $edition (install to $installPath)"
+
+$vs = 'C:\packer\vs_installer.exe'
+Invoke-WebRequest -Uri $bootstrappers[$edition] -OutFile $vs -UseBasicParsing
+
+# Workloads come from the pipeline, so a project that needs UWP or MAUI tools asks for them explicitly
+# instead of every image carrying 40 GB of IDE it will never use.
+$workloads = @()
+if ($env:VS_WORKLOADS) { $workloads = $env:VS_WORKLOADS -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
+if ($workloads.Count -eq 0) {
+    $workloads = @(
+        'Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools',
+        'Microsoft.VisualStudio.Workload.NativeDesktopBuildTools',
+        'Microsoft.VisualStudio.Component.Windows11SDK.22621',
+        'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+    )
+}
+Log ("workloads: " + ($workloads -join ' '))
+
+$vsArgs = @('--quiet', '--wait', '--norestart', '--nocache', '--installPath', $installPath)
+foreach ($w in $workloads) { $vsArgs += @('--add', $w) }
+$vsArgs += '--includeRecommended'
+
+Log "installing Visual Studio (this is the slow step: 15-40 minutes for Build Tools, longer for the IDE)"
+$p = Start-Process -FilePath $vs -ArgumentList $vsArgs -Wait -PassThru
+if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "Visual Studio installer failed with $($p.ExitCode)" }
+Log "Visual Studio installed (exit $($p.ExitCode))"
+$msbuild = if ($edition -eq 'buildtools') { 'C:\BuildTools\MSBuild\Current\Bin\MSBuild.exe' }
+           else { "$installPath\MSBuild\Current\Bin\MSBuild.exe" }
+Check $msbuild '-version' 
 
 Log "installing .NET SDK $env:DOTNET_CHANNEL"
 Invoke-WebRequest -Uri 'https://dot.net/v1/dotnet-install.ps1' -OutFile 'C:\packer\dotnet-install.ps1' -UseBasicParsing

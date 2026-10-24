@@ -30,6 +30,40 @@ teardown result.
 | `audit` finds leftovers | the printed inventory | `terraform destroy` was skipped (check the `deploy` result) or a resource was made outside Terraform |
 | Run dies mid-flight | `gh run list`, then the label sweep by hand | runner lost: teardown must be done manually — `terraform destroy` with the same vars, then the sweep |
 
+## 3a. Build Tools or the full IDE
+
+The image installs **Visual Studio Build Tools** by default: MSBuild, the C++ compiler, the Windows SDK and
+the .NET SDK — everything a build agent needs, and the edition Microsoft licenses for unattended agents.
+
+Some project types only build with the **full IDE** installed, because their MSBuild tasks or workloads ship
+with Visual Studio itself or with a VSIX extension:
+
+| project type | what is missing in Build Tools |
+|---|---|
+| UWP / WinUI, Windows Application Packaging (MSIX) | `Microsoft.VisualStudio.Workload.UniversalBuildTools` plus packaging targets |
+| .NET MAUI, Android, iOS | mobile workloads and their SDKs |
+| Office / VSTO add-ins | Office developer tools |
+| SSDT (SSIS/SSRS/SSAS) | SQL Server Data Tools workload |
+| Windows drivers | WDK integration that expects an IDE install |
+| anything using a third-party VSIX that ships MSBuild tasks | the extension itself |
+
+Switch edition with two Packer variables (both validate; nothing else changes):
+
+```bash
+-var "vs_edition=enterprise" \
+-var "vs_workloads=Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools,Microsoft.VisualStudio.Workload.UniversalBuildTools"
+```
+
+- `vs_edition`: `buildtools` (default) | `community` | `professional` | `enterprise`
+- `vs_workloads`: comma-separated workload/component IDs; empty means desktop .NET + C++ build tools + Windows 11 SDK
+
+Costs of switching: the image grows from ~15 GB to 30-45 GB, the bake takes 15-30 minutes longer, and
+**licensing is yours to confirm** — Community on a shared build server is not the intended use, and
+Professional/Enterprise need a subscription. That is why the default is Build Tools and the switch is explicit.
+
+The `dotnet` CLI is present throughout (`dotnet build`, `dotnet test`, `dotnet publish`, `dotnet pack`), so a
+project that builds with the SDK alone never needs the IDE at all.
+
 ## 3b. Custom build steps
 
 The build does not hard-code how the application is compiled. `custom/build.config.json` lists steps; each

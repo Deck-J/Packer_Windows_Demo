@@ -81,9 +81,15 @@ variable "app_version" {
   type        = string
   description = "Assembly version baked into the smoke-test copy"
 }
-variable "buildtools_version" {
-  type    = string
-  default = "17.11.5"
+variable "vs_edition" {
+  type        = string
+  default     = "buildtools"
+  description = "buildtools (default, licensed for agents) | community | professional | enterprise. Some project types only build with the full IDE."
+}
+variable "vs_workloads" {
+  type        = string
+  default     = ""
+  description = "Comma-separated VS workload/component IDs. Empty = desktop C++/.NET build tools + Windows 11 SDK."
 }
 variable "dotnet_channel" {
   type    = string
@@ -101,7 +107,7 @@ source "googlecompute" "windows" {
   disk_type         = "pd-balanced"
   image_name        = "winbuild-app-${replace(var.image_version, ".", "-")}"
   image_family      = "winbuild-app"
-  image_description = "Windows Server 2022 + VS Build Tools ${var.buildtools_version} + .NET ${var.dotnet_channel} + IIS. Built ${timestamp()}."
+  image_description = "Windows Server 2022 + Visual Studio ${var.vs_edition} + .NET ${var.dotnet_channel} + IIS. Built ${timestamp()}."
   image_labels = {
     owner   = "winbuild-ci"
     source  = "packer"
@@ -180,7 +186,8 @@ build {
   # 2b. Toolchain: Build Tools, Windows SDK, .NET SDK, IIS + ASP.NET Core Hosting Bundle.
   provisioner "powershell" {
     environment_vars = [
-      "BUILDTOOLS_VERSION=${var.buildtools_version}",
+      "VS_EDITION=${var.vs_edition}",
+      "VS_WORKLOADS=${var.vs_workloads}",
       "DOTNET_CHANNEL=${var.dotnet_channel}",
     ]
     script = "scripts/install-toolchain.ps1"

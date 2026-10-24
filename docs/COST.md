@@ -6,7 +6,8 @@
 | Two nodes, e2-standard-2 (Windows), ~20 min | ~$0.11/h each | ~$0.07 | $0 |
 | LB forwarding rule + proxy, ~20 min | ~$0.025/h | ~$0.01 | $0 |
 | Cloud Build worker time (Linux steps) | first 120 min/day free | ~$0 | $0 |
-| Image storage, ~15 GB | $0.05/GB-month | — | **~$0.75** |
+| Image storage, ~15 GB (Build Tools) | $0.05/GB-month | — | **~$0.75** |
+| Image storage if `vs_edition` is the full IDE, ~40 GB | $0.05/GB-month | — | **~$2.00** |
 | Egress for the test (a few MB) | $0.12/GB | <$0.01 | $0 |
 | **Total** | | **≈ $0.25 per run** | **≈ $0.75** |
 
