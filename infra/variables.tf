@@ -82,6 +82,12 @@ variable "dynatrace_dry_run" {
   description = "Prove metadata and Secret Manager access without downloading or installing the agent. For testing the plumbing without a tenant."
 }
 
+variable "otel_endpoint" {
+  type        = string
+  default     = ""
+  description = "OTLP endpoint the app exports to, e.g. http://collector:4317 or https://otlp.example/v1/otlp. Empty disables export."
+}
+
 variable "network_name" {
   type    = string
   default = "wb-net"

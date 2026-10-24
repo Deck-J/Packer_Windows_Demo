@@ -27,6 +27,23 @@ public class EndpointsTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Telemetry_reports_the_service_and_its_export_state()
+    {
+        var body = await _client.GetStringAsync("/telemetry");
+        Assert.Contains("WinBuild.SampleApp", body);
+        Assert.Contains("\"enabled\":", body);
+    }
+
+    [Fact]
+    public async Task Demo_checkout_produces_an_order()
+    {
+        var response = await _client.GetAsync("/demo/checkout?items=2");
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("19.98", body);   // 2 x 9.99, the documented demo price
+    }
+
+    [Fact]
     public async Task Every_response_identifies_the_instance()
     {
         var response = await _client.GetAsync("/healthz");

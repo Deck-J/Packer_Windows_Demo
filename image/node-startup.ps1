@@ -147,6 +147,18 @@ try {
   Set-Service -Name W3SVC -StartupType Automatic
   Start-Service W3SVC -ErrorAction SilentlyContinue
 
+  # 4a. Point telemetry at this environment's OTLP endpoint (empty means "do not export").
+  $otelEndpoint = ''
+  try { $otelEndpoint = Get-Meta 'otel-endpoint' } catch { }
+  $cfgPath = Join-Path $site 'web.config'
+  if (Test-Path $cfgPath) {
+      $cfgText = Get-Content $cfgPath -Raw
+      $cfgText = $cfgText.Replace('__OTEL_ENDPOINT__', $otelEndpoint)
+      $cfgText = $cfgText.Replace('__OTEL_ENABLED__', $(if ($otelEndpoint) { 'true' } else { 'false' }))
+      Set-Content -Path $cfgPath -Value $cfgText -Encoding UTF8
+      Set-Status 'telemetry' $(if ($otelEndpoint) { "otlp -> $otelEndpoint" } else { 'disabled: no endpoint configured' })
+  }
+
   # 4b. Monitoring agent, when the environment declares one.
   Install-Dynatrace
 

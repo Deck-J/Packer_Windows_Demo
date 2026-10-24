@@ -15,8 +15,17 @@
     <IsPackable>true</IsPackable>
     <PackageId>WinBuild.SampleApp</PackageId>
     <Authors>John Decker</Authors>
-    <Description>Sample application for the Windows build/deploy pipeline: /healthz, /version, X-Served-By.</Description>
+    <Description>Sample application for the Windows build/deploy pipeline: /healthz, /version, /telemetry, X-Served-By, and OpenTelemetry traces and metrics.</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- OpenTelemetry: vendor-neutral traces and metrics, exported over OTLP to whatever endpoint is configured. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.20.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- The deployment payload: the published output is carried inside the package under payload/. -->

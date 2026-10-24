@@ -37,6 +37,14 @@ docs/                         PLAN, RUNBOOK, ROLLBACK, COST, THREAT-MODEL, adr/
 Follow [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §1: it is one workflow dispatch (the bootstrap), then eight
 repository variables, then a merge to `main`.
 
+## Telemetry (OpenTelemetry)
+
+The sample app is instrumented with OpenTelemetry — ASP.NET Core and HttpClient spans, runtime metrics, and a
+worked example at `/demo/checkout` (parent span, child spans, counter, histogram). The endpoint is
+configuration, not code: `OTEL_EXPORTER_OTLP_ENDPOINT` flows from a repository variable through Terraform into
+instance metadata, and the node patches `web.config` at boot. `/telemetry` reports what the instance decided,
+so the test suite can assert it rather than assume it. See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §3f.
+
 ## Monitoring
 
 Dynatrace OneAgent is installed **at node startup**, not baked into the image: the node reads a PaaS token

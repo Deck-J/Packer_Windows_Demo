@@ -167,6 +167,30 @@ Things worth knowing before you turn it on:
 - **Token rotation is a secret update**, not a pipeline change: add a new secret version and the next node
   picks it up.
 
+## 3f. OpenTelemetry (the vendor-neutral path)
+
+The sample app is instrumented with OpenTelemetry: ASP.NET Core and HttpClient spans, runtime metrics, plus
+demo instrumentation you can see working (`/demo/checkout` creates a parent span, a `pricing` child, a
+`persist-order` client span, a counter and a histogram).
+
+Where the data goes is **configuration, not code**:
+
+| variable | meaning |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` (repo variable → Terraform `otel_endpoint` → instance metadata) | OTLP endpoint, e.g. `http://collector:4317` |
+| `OTEL_SERVICE_NAME` | defaults to `WinBuild.SampleApp` |
+| `OTEL_ENABLED` | forces export on/off; otherwise an endpoint means on, no endpoint means off |
+
+The image bakes `__OTEL_ENDPOINT__` / `__OTEL_ENABLED__` placeholders into `web.config`; the node replaces
+them at boot from metadata. So one image, any backend, no rebuild.
+
+`/telemetry` returns what the instance decided — `enabled`, `service`, `endpoint`, `environment`, `version` —
+which is how the test suite asserts that a node really is exporting (`EXPECT_OTEL=true`) rather than assuming.
+
+To try it without any vendor: run a collector somewhere reachable (a container on the NAS is enough), set
+`OTEL_EXPORTER_OTLP_ENDPOINT` to it, and call `/demo/checkout` through the load balancer. The traces land in
+the collector's log — no tenant, no licence.
+
 ## 4. Cheap recovery
 
 ```bash

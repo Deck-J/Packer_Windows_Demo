@@ -42,6 +42,10 @@ $webConfig = @"
         <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />
         <environmentVariable name="ASPNETCORE_URLS" value="http://localhost:$port" />
         <environmentVariable name="APP_BUILD_SOURCE" value="image-bake" />
+        <!-- Filled in per environment at node startup; the image carries no endpoint. -->
+        <environmentVariable name="OTEL_SERVICE_NAME" value="WinBuild.SampleApp" />
+        <environmentVariable name="OTEL_EXPORTER_OTLP_ENDPOINT" value="__OTEL_ENDPOINT__" />
+        <environmentVariable name="OTEL_ENABLED" value="__OTEL_ENABLED__" />
       </environmentVariables>
     </aspNetCore>
     <httpProtocol>

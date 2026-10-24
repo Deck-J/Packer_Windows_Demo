@@ -44,6 +44,30 @@ try {
     Assert-Equal -Actual $code -Expected 404 -Because 'unknown routes must 404'
 }
 
+# Telemetry is part of the app contract now: /telemetry says whether it is exporting and where.
+$telResponse = Assert-HttpOk -Url "$BaseUrl/telemetry" -Because '/telemetry must answer'
+if ($telResponse) {
+    $tel = $telResponse.Content | ConvertFrom-Json
+    Assert-Match -Actual $tel.service -Pattern 'WinBuild\.SampleApp' -Because 'telemetry must report the service name'
+    Assert-Match -Actual $tel.version -Pattern '\d+\.\d+' -Because 'telemetry must report the running version'
+    if ($env:EXPECT_OTEL -eq 'true') {
+        Assert-True -Condition ($tel.enabled -eq $true) -Because 'OTLP export must be enabled when an endpoint is configured'
+        Assert-True -Condition ($tel.endpoint -ne 'none') -Because 'an enabled exporter must name its endpoint'
+    } else {
+        Write-Output "  telemetry: enabled=$($tel.enabled) endpoint=$($tel.endpoint)"
+    }
+}
+
+# The demo endpoint exercises the manual instrumentation: spans, a counter and a histogram.
+$demoResponse = Assert-HttpOk -Url "$BaseUrl/demo/checkout?items=2" -Because '/demo/checkout must answer'
+if ($demoResponse) {
+    $order = $demoResponse.Content | ConvertFrom-Json
+    Assert-True -Condition ($order.total -gt 0) -Because 'the demo checkout must compute a total'
+    if ($env:EXPECT_OTEL -eq 'true') {
+        Assert-True -Condition ($order.traceId -ne 'no-trace') -Because 'an instrumented request must produce a trace id'
+    }
+}
+
 if ($Phase -eq 'deploy') {
     # Distribution is the load balancer's job, and this is where we can see it: several requests must
     # not all come from one node, or the "two nodes tested" claim is false.
