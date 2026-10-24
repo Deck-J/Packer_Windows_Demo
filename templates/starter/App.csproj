@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Starter app: the minimum that satisfies the framework contract (/healthz, /version, X-Served-By). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version Condition="'$(Version)' == ''">0.0.0-local</Version>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>

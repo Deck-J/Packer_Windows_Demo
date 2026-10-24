@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Check a project definition against what the image actually provides, before anything is built.
+
+    bin/framework-doctor                 # every project in projects/
+    bin/framework-doctor projects/x.yaml # one
+
+Exit codes: 0 everything satisfiable, 1 something is not, 2 the check itself could not run.
+
+This exists because the expensive failure mode is discovering a missing Visual Studio workload 45 minutes into
+an image build. Everything it reports can be fixed either in the project file or in the image profile, and it
+prints which.
+"""
+import sys
+import pathlib
+
+try:
+    import yaml
+except ImportError:
+    print("FAIL: PyYAML is required (pip install pyyaml)", file=sys.stderr)
+    sys.exit(2)
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+CAP = ROOT / "image" / "profile.yaml"
+
+fails, warns, checks = [], [], 0
+
+
+def check(ok, msg, fix=""):
+    global checks
+    checks += 1
+    if not ok:
+        fails.append((msg, fix))
+
+
+def warn(ok, msg, fix=""):
+    global checks
+    checks += 1
+    if not ok:
+        warns.append((msg, fix))
+
+
+def main(argv):
+    if not CAP.is_file():
+        print(f"FAIL: {CAP} is missing — the doctor cannot know what the image provides", file=sys.stderr)
+        return 2
+    cap = yaml.safe_load(CAP.read_text(encoding="utf-8"))
+
+    paths = [pathlib.Path(a) for a in argv[1:]] or sorted((ROOT / "projects").glob("*.yaml"))
+    if not paths:
+        print("FAIL: no project definitions found", file=sys.stderr)
+        return 2
+
+    for path in paths:
+        p = yaml.safe_load(path.read_text(encoding="utf-8"))
+        name = p.get("name", path.stem)
+        build = p.get("build") or {}
+        print(f"\n{name}  (profile: {p.get('profile')})")
+
+        edition = build.get("vs_edition", "buildtools")
+        order = ["buildtools", "community", "professional", "enterprise"]
+        has = cap.get("vs_edition", "buildtools")
+        check(order.index(edition) <= order.index(has),
+              f"needs Visual Studio '{edition}' but the image builds '{has}'",
+              f"set vs_edition={edition} in the image build (VS_EDITION repository variable)")
+
+        if build.get("use_devenv"):
+            check(bool(cap.get("devenv")),
+                  "asks for a devenv build but the image has no IDE",
+                  "set vs_edition to community/professional/enterprise")
+
+        if build.get("disable_out_of_proc"):
+            check(bool(cap.get("devenv")),
+                  "asks for DisableOutOfProcBuild but there is no IDE to disable it in",
+                  "set vs_edition to the full IDE")
+            check(bool(cap.get("out_of_proc_disabled")),
+                  "asks for out-of-proc to be disabled but the image does not do it",
+                  "set vs_disable_out_of_proc_build=true in the image build")
+
+        for w in build.get("vs_workloads") or []:
+            check(w in (cap.get("workloads") or []),
+                  f"workload '{w}' is not installed in the image",
+                  f"add it to install-toolchain.ps1 workloads (or set VS_WORKLOADS)")
+
+        chan = build.get("dotnet_channel")
+        if chan:
+            check(chan in (cap.get("dotnet_channels") or []),
+                  f".NET {chan} is not installed (image has {cap.get('dotnet_channels')})",
+                  f"set DOTNET_CHANNEL={chan} in the image build")
+
+        for step in build.get("extra_steps") or []:
+            check((ROOT / step).exists(), f"extra step '{step}' does not exist", "fix the path in the project file")
+        for key in ("solution", "tests"):
+            val = p.get(key)
+            if val:
+                check((ROOT / val).exists(), f"{key} '{val}' does not exist", "fix the path in the project file")
+
+        deploy = p.get("deploy") or {}
+        for t in deploy.get("targets") or []:
+            if t == "iis":
+                check("iis" in (cap.get("tools") or []), "deploys to IIS but the image has no IIS", "add IIS to the image")
+            if t == "service":
+                warn(True, "", "")
+
+        prof = p.get("profile")
+        if prof == "installer-vdproj" and not (cap.get("vsix") or []):
+            warn(False, "profile installer-vdproj needs the Installer Projects VSIX, which the image does not install",
+                 "set vs_extra_vsix_urls when building the image")
+
+    for msg, fix in fails:
+        print(f"  ✗ {msg}")
+        if fix:
+            print(f"    fix: {fix}")
+    for msg, fix in warns:
+        print(f"  ! {msg}")
+        if fix:
+            print(f"    fix: {fix}")
+
+    print(f"\n{checks} checks, {len(fails)} blocking, {len(warns)} advisory")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

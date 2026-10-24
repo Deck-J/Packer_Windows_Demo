@@ -66,6 +66,15 @@ from the build status rather than inferred from the log. See [`docs/RUNBOOK.md`]
 image can do an IDE build" is a log file rather than a claim — skipped, honestly, on a Build Tools image. For a
 `.vdproj` MSI it needs the IDE plus the Installer Projects extension: see [`demo/README.md`](demo/README.md).
 
+## Start here if you have been handed this
+
+[`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) — 30 minutes from *Use this template* to a green pipeline:
+
+```bash
+bin/init-from-template.sh my-service --port 8080   # starter app + project definition
+bin/framework-doctor                              # will this image build it? (seconds, not 45 minutes)
+```
+
 ## It is a framework, not a script
 
 - **`projects/<app>.yaml`** — one file per application: solution, tests, artifact, deploy shape, image needs.
@@ -73,6 +82,9 @@ image can do an IDE build" is a log file rather than a claim — skipped, honest
 - **`profiles/`** — `windows-iis`, `windows-service`, `installer-vdproj`, `library`: the shape of a build.
 - **`custom/`** — the ordered steps and the validation suite, when the profile is not enough.
 - **`bin/new-project.sh`** — scaffold a new application definition in one command.
+- **`bin/framework-doctor`** — compares each project against `image/profile.yaml` (what the image really provides) and
+  prints the setting to change; it runs as a preflight job, so a missing workload fails in seconds not minutes.
+- **`templates/starter/`** — a minimal app plus contract tests that satisfy the framework's requirements.
 
 See [`docs/EXTENDING.md`](docs/EXTENDING.md) for the three extension points and for what is deliberately *not*
 abstracted (the toolchain, the topology, and secrets).

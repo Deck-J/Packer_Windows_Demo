@@ -64,6 +64,8 @@ jobs:
           python-version: "3.12"
       - run: pip install pyyaml
       - run: python3 bin/validate-projects.py
+      - name: doctor - does the image provide what these projects need?
+        run: python3 bin/framework-doctor
 
   labels:
     name: resource labels and regions

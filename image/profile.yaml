@@ -1,0 +1,18 @@
+# What the image built by this framework actually provides.
+#
+# The doctor (bin/framework-doctor) compares every project definition against this file, so a missing workload
+# or IDE is a two-second failure instead of a 45-minute image build that ends in "the task X was not found".
+# Change this when you change packer/scripts/install-toolchain.ps1 - the two are one decision.
+vs_edition: enterprise
+dotnet_channels: ["8.0"]
+devenv: true
+out_of_proc_disabled: true
+workloads:
+  - Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools
+  - Microsoft.VisualStudio.Workload.NativeDesktopBuildTools
+  - Microsoft.VisualStudio.Component.Windows11SDK.22621
+  - Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+  - Microsoft.Net.Component.4.8.TargetingPack
+  - Microsoft.Net.Component.4.8.SDK
+vsix: []
+tools: [msbuild, git, 7zip, jq, nuget, gcloud, iis, aspnetcore-hosting-bundle]

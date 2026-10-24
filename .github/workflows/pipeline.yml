@@ -41,7 +41,22 @@ env:
   RUN_ID: ${{ github.run_number }}
 
 jobs:
+  preflight:
+    name: preflight — can this image build these projects?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - name: project definitions
+        run: python3 bin/validate-projects.py
+      - name: doctor against the image profile
+        run: python3 bin/framework-doctor
+
   build-image:
+    needs: preflight
     name: build Windows image (Cloud Build + Packer)
     runs-on: ubuntu-latest
     outputs:
