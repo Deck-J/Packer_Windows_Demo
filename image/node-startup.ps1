@@ -39,23 +39,33 @@ function Install-Dynatrace {
         dynatrace-host-group    host group name
         dynatrace-token-secret  Secret Manager secret name holding a PaaS token
     #>
+    $dryRun = $false
+    try { $dryRun = ((Get-Meta 'dynatrace-dry-run') -eq 'true') } catch { }
+
     $tenant = $null
     try { $tenant = Get-Meta 'dynatrace-tenant' } catch { }
+    # A dry run with no tenant still exercises the metadata and secret path, using a placeholder tenant.
+    if (-not $tenant -and $dryRun) { $tenant = 'dryrun' }
     if (-not $tenant) { Set-Status 'dynatrace' 'not configured'; return }
 
-    $secretName = Get-Meta 'dynatrace-token-secret'
-    $hostGroup  = Get-Meta 'dynatrace-host-group'
-    Set-Status 'dynatrace' "tenant $tenant, group $hostGroup"
+    $secretName = $null
+    try { $secretName = Get-Meta 'dynatrace-token-secret' } catch { }
+    $hostGroup = $null
+    try { $hostGroup = Get-Meta 'dynatrace-host-group' } catch { }
+    Set-Status 'dynatrace' "tenant $tenant, group $hostGroup, dry-run $dryRun"
+
+    if (-not $secretName) {
+        if ($dryRun) { Set-Status 'dynatrace' 'dry run: no token secret configured, nothing downloaded'; return }
+        throw 'dynatrace-token-secret metadata is empty but an install was requested'
+    }
 
     $token = (& gcloud secrets versions access latest --secret=$secretName 2>$null)
     if ($LASTEXITCODE -ne 0 -or -not $token) {
         throw "cannot read Dynatrace token secret '$secretName' (the node service account needs secretAccessor)"
     }
 
-    $dryRun = $false
-    try { $dryRun = ((Get-Meta 'dynatrace-dry-run') -eq 'true') } catch { }
     if ($dryRun) {
-        Set-Status 'dynatrace' "dry run: tenant $tenant, secret readable, install skipped"
+        Set-Status 'dynatrace' "dry run: tenant $tenant, secret '$secretName' readable, install skipped"
         return
     }
 

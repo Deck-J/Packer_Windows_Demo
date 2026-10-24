@@ -42,7 +42,8 @@ repository variables, then a merge to `main`.
 Dynatrace OneAgent is installed **at node startup**, not baked into the image: the node reads a PaaS token
 from Secret Manager with its own service account, installs the agent with the tenant and host group from
 instance metadata, and records the host tags in `C:\app\status.json`. Leave `DYNATRACE_TENANT` unset and
-nothing is installed — the pipeline costs nothing until you opt in. Setup and caveats:
+nothing is installed — the pipeline costs nothing until you opt in, and the **test pipeline currently runs in
+dry-run**: it proves the metadata and Secret Manager path and skips the download. Setup and caveats:
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §3e.
 
 ## Two things you can change without touching the pipeline

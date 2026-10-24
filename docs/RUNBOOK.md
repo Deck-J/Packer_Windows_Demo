@@ -143,9 +143,18 @@ token cannot be read the node fails loudly rather than half-installing.
   with a PaaS token you can create yourself. This is the one that works for testing the install.
   It expires, the tenant is deleted, and after that the pipeline fails at the agent step — which is why
   `DYNATRACE_TENANT` is unset by default rather than something you have to remember to remove.
-- **No tenant at all** — set `DYNATRACE_DRY_RUN=true`. The node then reads the metadata, fetches the token
-  from Secret Manager, records that the secret was readable, and stops before downloading anything. That
-  proves the plumbing (metadata → secret → permissions) without a tenant, and is what to use in CI.
+- **No tenant at all** — `DYNATRACE_DRY_RUN=true`, **which is the default on the test pipeline today**. The
+  node treats the tenant as a placeholder, records what it found, and stops before downloading anything:
+
+  | what is configured | what the node does | `C:\app\status.json` stage |
+  |---|---|---|
+  | nothing | skips the step entirely | `dynatrace: not configured` |
+  | dry-run only | proves metadata is wired, downloads nothing | `dry run: no token secret configured, nothing downloaded` |
+  | dry-run + secret name | proves metadata **and** Secret Manager IAM | `dry run: tenant ..., secret '<name>' readable, install skipped` |
+  | real tenant + secret, no dry-run | full install | `dynatrace: running; host tags: ...` |
+
+  Promotion does **not** default to dry-run: `DYNATRACE_DRY_RUN_PROMOTE` is `false` unless set, so a real
+  tenant is required before anything reaches production.
 
 Things worth knowing before you turn it on:
 

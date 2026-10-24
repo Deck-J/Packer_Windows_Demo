@@ -268,7 +268,7 @@ jobs:
             -var="dynatrace_tenant=${{ vars.DYNATRACE_TENANT }}" \
             -var="dynatrace_host_group=${{ vars.DYNATRACE_HOST_GROUP || 'winbuild-test' }}" \
             -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}" \
-            -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'false' }}"
+            -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'true' }}"
           echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
 
   verify:
@@ -372,7 +372,7 @@ jobs:
             -var="dynatrace_tenant=${{ vars.DYNATRACE_TENANT }}" \
             -var="dynatrace_host_group=${{ vars.DYNATRACE_HOST_GROUP || 'winbuild-test' }}" \
             -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}" \
-            -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'false' }}"
+            -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'true' }}"
 
   audit:
     name: prove nothing is left billing
