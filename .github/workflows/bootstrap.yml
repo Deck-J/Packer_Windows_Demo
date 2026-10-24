@@ -62,7 +62,7 @@ jobs:
           echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
           bash scripts/phase.sh start 1 "Bootstrap — project, buckets, service accounts, WIF"
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: "beta"
 
@@ -121,7 +121,7 @@ jobs:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.DEPLOYER_SA }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
 
       - name: Deployer identity works
         run: |
