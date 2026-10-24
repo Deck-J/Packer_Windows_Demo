@@ -42,19 +42,21 @@ echo "live: $LOG_URL"
 
 # Stream, annotating as we go. `gcloud builds log --stream` exits when the build finishes.
 if ! gcloud builds log --stream "$BUILD_ID" --project "$PROJECT" 2>&1 | while IFS= read -r line; do
+      annotated=0
       case "$line" in
         *"Step #"*"Starting Step"*|*"Step #"*"Pulling image"*)
-            echo "::endgroup::"; echo "::group::$line" ;;
+            echo "::endgroup::"; echo "::group::$line"; annotated=1 ;;
       esac
       case "$line" in
-        *"msbuild-demo"*|*"MSBuild"*)        echo "::notice title=msbuild::$line" ;;
-        *"devenv"*)                          echo "::notice title=devenv::$line" ;;
-        *"Packer"*"artifact"*|*"Creating image"*|*"image_name"*)
-                                            echo "::notice title=image::$line" ;;
-        *"Traceback"*|*"ERROR"*|*"FAILED"*|*"failed"*)
-                                            echo "::warning title=cloud-build::$line" ;;
+        *"MSBuild"*|*"msbuild"*)  echo "::notice title=msbuild::$line"; annotated=1 ;;
+        *"devenv"*)                echo "::notice title=devenv::$line"; annotated=1 ;;
+        *"Creating image"*|*"image_name"*) echo "::notice title=image::$line"; annotated=1 ;;
+        *"Traceback"*|*"ERROR"*|*"FAILED"*|*"failed"*) echo "::warning title=cloud-build::$line"; annotated=1 ;;
       esac
-      printf '%s\n' "$line"
+      # An annotated line already appears as an annotation; do not print it twice.
+      if [ "$annotated" -eq 0 ]; then printf '%s\n' "$line"; fi
+      # Keep the loop's exit status 0, or `if !` reads the last test as a stream failure.
+      true
     done; then
   warn "log stream ended unexpectedly; falling back to status polling"
 fi
