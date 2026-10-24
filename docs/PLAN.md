@@ -229,6 +229,13 @@ Teardown is a job, not a habit:
 | Resilience | Two nodes in two zones, health-checked, LB retries; the app is stateless in test | Backend health shows 2/2 during the test |
 | Rollback | Redeploy the previous package version; pin the image by name instead of family; re-run `deploy.sh` at the previous tag | Runbook step with exact commands |
 
+### 4.8 Monitoring
+
+Dynatrace OneAgent is installed by the node at boot (tenant + host group from metadata, token from Secret
+Manager), not baked into the image: an image that carries a tenant credential cannot be shared between
+environments, and rotating a token would mean rebuilding it. The build machine is left unmonitored by
+default; build-level visibility is available as a `custom/` step, at the cost of a host unit per build.
+
 ## 5. Stage plan
 
 Each stage has an exit criterion that is a command, not an opinion.

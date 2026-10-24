@@ -37,6 +37,14 @@ docs/                         PLAN, RUNBOOK, ROLLBACK, COST, THREAT-MODEL, adr/
 Follow [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §1: it is one workflow dispatch (the bootstrap), then eight
 repository variables, then a merge to `main`.
 
+## Monitoring
+
+Dynatrace OneAgent is installed **at node startup**, not baked into the image: the node reads a PaaS token
+from Secret Manager with its own service account, installs the agent with the tenant and host group from
+instance metadata, and records the host tags in `C:\app\status.json`. Leave `DYNATRACE_TENANT` unset and
+nothing is installed — the pipeline costs nothing until you opt in. Setup and caveats:
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) §3e.
+
 ## Two things you can change without touching the pipeline
 
 **Your own build.** `custom/` is the contract: `custom/run.ps1` executes the steps listed in

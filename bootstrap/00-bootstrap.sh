@@ -123,6 +123,18 @@ gcloud iam service-accounts add-iam-policy-binding "$SA_DEPLOY" \
   --quiet >/dev/null
 echo "deployer impersonation bound to ${GITHUB_REPO}"
 
+if [ -n "${DYNATRACE_TOKEN_SECRET:-}" ]; then
+  say "6b/8 Dynatrace: letting the nodes read the agent token"
+  if gcloud secrets describe "$DYNATRACE_TOKEN_SECRET" >/dev/null 2>&1; then
+    gcloud secrets add-iam-policy-binding "$DYNATRACE_TOKEN_SECRET" \
+      --member="serviceAccount:${SA_NODE}" \
+      --role="roles/secretmanager.secretAccessor" --quiet >/dev/null
+    echo "  node service account may read $DYNATRACE_TOKEN_SECRET"
+  else
+    echo "  WARNING: secret $DYNATRACE_TOKEN_SECRET does not exist yet; create it and re-run this script"
+  fi
+fi
+
 say "7/8 Cost guardrails (CPU quota + budget)"
 # A runaway loop must not be able to create forty Windows VMs.
 gcloud compute project-info describe --format='value(quotas)' >/dev/null 2>&1 || true

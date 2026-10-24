@@ -264,7 +264,10 @@ jobs:
             -var="app_version=${VERSION}" \
             -var="package_url=${{ needs.stage-artifact.outputs.url }}" \
             -var="package_sha256=${{ needs.publish.outputs.sha256 }}" \
-            -var="run_id=${RUN_ID}"
+            -var="run_id=${RUN_ID}" \
+            -var="dynatrace_tenant=${{ vars.DYNATRACE_TENANT }}" \
+            -var="dynatrace_host_group=${{ vars.DYNATRACE_HOST_GROUP || 'winbuild-test' }}" \
+            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}"
           echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
 
   verify:
@@ -364,7 +367,10 @@ jobs:
             -var="project_id=${{ vars.GCP_PROJECT }}" -var="region=${{ vars.GCP_REGION }}" \
             -var="zone_a=${{ vars.GCP_ZONE }}" -var="image=${{ needs.build-image.outputs.image }}" \
             -var="node_service_account=${{ vars.NODE_SA }}" -var="app_version=${VERSION}" \
-            -var="package_url=unused" -var="package_sha256=unused" -var="run_id=${RUN_ID}"
+            -var="package_url=unused" -var="package_sha256=unused" -var="run_id=${RUN_ID}" \
+            -var="dynatrace_tenant=${{ vars.DYNATRACE_TENANT }}" \
+            -var="dynatrace_host_group=${{ vars.DYNATRACE_HOST_GROUP || 'winbuild-test' }}" \
+            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}"
 
   audit:
     name: prove nothing is left billing

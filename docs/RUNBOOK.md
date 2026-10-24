@@ -104,6 +104,47 @@ git tag -a v1.4.0 -m "1.4.0" && git push origin v1.4.0     # builds a release-na
 gh workflow run promote.yml -f tag=v1.4.0 -f confirm=PROMOTE  # waits for the gcp-prod approval
 ```
 
+## 3e. Dynatrace OneAgent
+
+The agent is installed **at node startup, not into the image**. An image carrying a tenant token cannot be
+shared between environments and turns every image copy into a credential; a node that reads the token from
+Secret Manager can be rotated without rebuilding anything.
+
+Set up once:
+
+1. In Dynatrace, create a **PaaS token** with *Installer download* and *Host group* permissions.
+2. Store it in Secret Manager:
+   ```bash
+   printf '%s' '<token>' | gcloud secrets create dynatrace-oneagent-token --data-file=- --replication-policy=automatic
+   ```
+3. Let the node service account read it (the bootstrap does this if `DYNATRACE_TOKEN_SECRET` is set, and it
+   is idempotent):
+   ```bash
+   gcloud secrets add-iam-policy-binding dynatrace-oneagent-token \
+     --member="serviceAccount:sa-winbuild-node@$PROJECT.iam.gserviceaccount.com" \
+     --role="roles/secretmanager.secretAccessor"
+   ```
+4. Repository **variables** (not secrets — these are identifiers):
+   `DYNATRACE_TENANT` (e.g. `abc12345`), `DYNATRACE_HOST_GROUP` (default `winbuild-test`), and
+   `DYNATRACE_TOKEN_SECRET` (the secret name above).
+
+What the node does at boot, in `image/node-startup.ps1`: reads the tenant from metadata, fetches the token
+with its own service account, downloads the OneAgent MSI for that tenant, installs it with `TENANT`,
+`TENANT_TOKEN` and `HOST_GROUP`, waits for the Dynatrace services to be running, records the host tags in
+`C:\app\status.json`, and deletes the MSI. If the tenant metadata is empty the step is skipped; if the
+token cannot be read the node fails loudly rather than half-installing.
+
+Things worth knowing before you turn it on:
+
+- **Unset `DYNATRACE_TENANT` = no agent.** That is the default, so the pipeline costs nothing until you opt in.
+- **Ephemeral nodes create host units.** A node that lives 20 minutes still registers as a host; name the
+  host group per environment (`winbuild-test`, `winbuild-prod`) so test churn is visible and separable in
+  the Dynatrace UI rather than polluting production.
+- **The build machine is not monitored by default.** If you want build visibility, install the agent in
+  `custom/` as a step (token from Secret Manager the same way) — but it will consume a host unit per build.
+- **Token rotation is a secret update**, not a pipeline change: add a new secret version and the next node
+  picks it up.
+
 ## 4. Cheap recovery
 
 ```bash

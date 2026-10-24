@@ -67,6 +67,11 @@ resource "google_compute_instance_template" "node" {
     app-version                = var.app_version
     package-url                = var.package_url
     package-sha256             = var.package_sha256
+
+    # Dynatrace: identifiers only. The API token is fetched from Secret Manager by the node itself.
+    dynatrace-tenant       = var.dynatrace_tenant
+    dynatrace-host-group   = var.dynatrace_host_group
+    dynatrace-token-secret = var.dynatrace_token_secret
   }
 
   lifecycle {

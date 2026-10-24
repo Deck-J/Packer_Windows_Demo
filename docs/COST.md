@@ -10,6 +10,10 @@
 | Egress for the test (a few MB) | $0.12/GB | <$0.01 | $0 |
 | **Total** | | **≈ $0.25 per run** | **≈ $0.75** |
 
+Monitoring adds no GCP cost. Dynatrace licensing is per host (host units), and ephemeral test nodes each
+register as a host even for 20 minutes: if you enable the agent on the test pipeline, expect a handful of
+short-lived hosts per day, which is why the host group is `winbuild-test` and separate from production.
+
 Two numbers matter more than the table:
 
 - A leaked Windows VM over a weekend is about **$27**. That is why there is a janitor, a CPU quota and a

@@ -58,6 +58,24 @@ variable "run_id" {
   description = "Labels every resource; the label sweep and the janitor use it"
 }
 
+variable "dynatrace_tenant" {
+  type        = string
+  default     = ""
+  description = "Dynatrace environment id, e.g. abc12345. Empty disables agent installation."
+}
+
+variable "dynatrace_host_group" {
+  type        = string
+  default     = ""
+  description = "OneAgent host group, e.g. winbuild-test. Empty means the default group."
+}
+
+variable "dynatrace_token_secret" {
+  type        = string
+  default     = ""
+  description = "Secret Manager secret holding a Dynatrace PaaS token. The node service account reads it; the token is never in metadata, the image or the repo."
+}
+
 variable "network_name" {
   type    = string
   default = "wb-net"

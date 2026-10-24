@@ -20,6 +20,17 @@ per-build 32-character password in Secret Manager, not in a log or the repo), **
 label plus the scheduled reaper) and **authority** (the deployer service account is the only thing that can
 read the secret). It is a flag a human sets for one run, not a default.
 
+## Monitoring agent (Dynatrace)
+
+The OneAgent token is a credential with download rights on the tenant, so it is treated as one: stored in
+Secret Manager, readable only by the node service account, fetched at boot and never written to instance
+metadata, the image, the repo or a log. The installer URL is tenant-specific and authenticated per request.
+A node that cannot read the secret fails rather than continuing silently unmonitored.
+
+Residual risk: the token is present in the node's memory during install and in the installer's arguments
+for the life of the `msiexec` call. Shortening that window means installing via a drop-in package with a
+pre-seeded configuration, which trades a build-time secret for a rotation burden — not obviously better.
+
 ## Deliberate accepted risks
 
 - **The builder VM has an external IP.** Needed for Microsoft/NuGet downloads and Windows activation; no
