@@ -134,7 +134,7 @@ jobs:
           bash scripts/phase.sh start 4 "Upload to GitHub Packages"
 
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "8.0.x"
 
