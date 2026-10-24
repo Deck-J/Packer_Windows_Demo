@@ -16,6 +16,24 @@
 
 ## 2. A normal run, and what you see while it runs
 
+Every phase announces itself: a banner, a collapsible log group, and a verdict row appended to the run summary.
+The numbering is fixed across workflows so a log reads as a sequence rather than a pile of jobs:
+
+| phase | where | what it is |
+|---|---|---|
+| 1 | `bootstrap` workflow (once) | project, buckets, service accounts, WIF, budget |
+| 2 | `pipeline` / build-image | **build builder — building application** |
+| 3 | `pipeline` / build-image | **build succeeded** (milestone: the image exists) |
+| 4 | `pipeline` / publish | **upload to GitHub Packages** |
+| 5 | `pipeline` / publish | **upload succeeded** (milestone: the package is there) |
+| 6 | `pipeline` / deploy | **deploy nodes** |
+| 7 | `pipeline` / verify | **testing deployment** |
+| 8 | `pipeline` / destroy | teardown |
+| 9 | `pipeline` / audit | cost audit — nothing left billing |
+
+Phases 3 and 5 are milestones inside 2 and 4 rather than jobs of their own: they mark the moment the artefact
+exists, which is what stops "the build job passed" from being confused with "the image was produced".
+
 The `build-image` job does not fire-and-wait: `scripts/stream-cloud-build.sh` submits the build asynchronously
 and streams its log into the Actions log as it happens, annotating the lines that matter.
 
