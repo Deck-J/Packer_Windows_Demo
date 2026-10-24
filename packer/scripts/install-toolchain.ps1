@@ -73,7 +73,33 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "Visual Studio installe
 Log "Visual Studio installed (exit $($p.ExitCode))"
 $msbuild = if ($edition -eq 'buildtools') { 'C:\BuildTools\MSBuild\Current\Bin\MSBuild.exe' }
            else { "$installPath\MSBuild\Current\Bin\MSBuild.exe" }
-Check $msbuild '-version' 
+Check $msbuild '-version'
+
+# Some legacy project types - .vdproj installers, SSDT/SSRS report projects, VSTO and Office add-ins - fail
+# from the command line because devenv builds them out of process. Visual Studio ships a tool that turns
+# that off; it writes a per-user registry value, so it must run as the account that will do the builds.
+if ($env:VS_DISABLE_OUT_OF_PROC -eq 'true') {
+    if ($edition -eq 'buildtools') {
+        Log "WARNING: VS_DISABLE_OUT_OF_PROC is set but this image is Build Tools, which has no devenv - ignoring"
+    } else {
+        $tool = Join-Path $installPath 'Common7\IDE\CommonExtensions\Microsoft\VSI\DisableOutOfProcBuild\DisableOutOfProcBuild.exe'
+        if (-not (Test-Path $tool)) {
+            throw "VS_DISABLE_OUT_OF_PROC is set but DisableOutOfProcBuild.exe is not at $tool"
+        }
+        Log "disabling out-of-proc build for $edition (per-user registry value)"
+        $p = Start-Process -FilePath $tool -Wait -PassThru
+        Log "DisableOutOfProcBuild exit $($p.ExitCode)"
+        # Report what actually changed rather than assuming the tool worked.
+        $hits = Get-ChildItem 'HKCU:\Software\Microsoft\VisualStudio' -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    $v = Get-ItemProperty -Path $_.PSPath -Name 'EnableOutOfProcBuild' -ErrorAction SilentlyContinue
+                    if ($null -ne $v) { "$($_.PSChildName): EnableOutOfProcBuild=$($v.EnableOutOfProcBuild)" }
+                }
+        if ($hits) { $hits | ForEach-Object { Log "  $_" } }
+        else { Log "  WARNING: no EnableOutOfProcBuild value found; the tool may have failed silently" }
+    }
+}
+ 
 
 Log "installing .NET SDK $env:DOTNET_CHANNEL"
 Invoke-WebRequest -Uri 'https://dot.net/v1/dotnet-install.ps1' -OutFile 'C:\packer\dotnet-install.ps1' -UseBasicParsing

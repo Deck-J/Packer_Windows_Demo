@@ -61,6 +61,30 @@ Costs of switching: the image grows from ~15 GB to 30-45 GB, the bake takes 15-3
 **licensing is yours to confirm** — Community on a shared build server is not the intended use, and
 Professional/Enterprise need a subscription. That is why the default is Build Tools and the switch is explicit.
 
+### Disabling out-of-process builds
+
+A related switch, and the one people hit with older projects: `.vdproj` installer projects, SSDT/SSRS report
+projects, VSTO and Office add-ins often fail from a command line because `devenv` builds them **out of
+process**. Visual Studio ships `DisableOutOfProcBuild.exe` (under
+`Common7\IDE\CommonExtensions\Microsoft\VSI\DisableOutOfProcBuild`) which turns that off.
+
+Set it per image:
+
+```bash
+-var "vs_edition=enterprise" -var "vs_disable_out_of_proc_build=true"
+```
+
+Two honest caveats:
+
+- It writes a **per-user** registry value (HKCU). Provisioning runs it as the account that builds the image, so
+  builds that run as *that* account are covered. If your build runs as a different user, the value must be set
+  for that user too — the provisioning log prints what it found under
+  `HKCU:\Software\Microsoft\VisualStudio`, so you can see whether it was applied rather than assuming.
+- It needs **devenv**, i.e. the full IDE. With `vs_edition=buildtools` the flag is ignored with a warning.
+
+Also worth setting for stubborn projects (COM-heavy, or parallel builds that deadlock): `MSBUILDDISABLENODEREUSE=1`
+(already in `custom/build.config.json`) and `-m:1` on the build command.
+
 The `dotnet` CLI is present throughout (`dotnet build`, `dotnet test`, `dotnet publish`, `dotnet pack`), so a
 project that builds with the SDK alone never needs the IDE at all.
 

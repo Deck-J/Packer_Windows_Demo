@@ -91,6 +91,11 @@ variable "vs_workloads" {
   default     = ""
   description = "Comma-separated VS workload/component IDs. Empty = desktop C++/.NET build tools + Windows 11 SDK."
 }
+variable "vs_disable_out_of_proc_build" {
+  type        = bool
+  default     = false
+  description = "Run DisableOutOfProcBuild.exe so devenv builds in-proc. Needed for .vdproj installer projects, SSDT/SSRS, VSTO/Office add-ins and some legacy project types. Requires the full IDE."
+}
 variable "dotnet_channel" {
   type    = string
   default = "8.0"
@@ -188,6 +193,7 @@ build {
     environment_vars = [
       "VS_EDITION=${var.vs_edition}",
       "VS_WORKLOADS=${var.vs_workloads}",
+      "VS_DISABLE_OUT_OF_PROC=${var.vs_disable_out_of_proc_build}",
       "DOTNET_CHANNEL=${var.dotnet_channel}",
     ]
     script = "scripts/install-toolchain.ps1"
