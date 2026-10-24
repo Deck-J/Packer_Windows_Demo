@@ -47,6 +47,12 @@ variable "package_url" {
 
 variable "package_sha256" { type = string }
 
+variable "ttl" {
+  type        = string
+  default     = "2h"
+  description = "Reaper TTL label. '2h' for ephemeral test runs; 'none' for a persistent environment."
+}
+
 variable "run_id" {
   type        = string
   description = "Labels every resource; the label sweep and the janitor use it"

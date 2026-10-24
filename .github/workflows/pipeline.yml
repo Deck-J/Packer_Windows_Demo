@@ -8,6 +8,7 @@ name: pipeline
 on:
   push:
     branches: [main]
+    tags: ["v*"]        # a tag builds a release-named image and package, then attaches the manifest
   workflow_dispatch:
     inputs:
       skip_image_build:
@@ -34,8 +35,9 @@ concurrency:
   cancel-in-progress: false   # never cancel mid-run: teardown must be allowed to finish
 
 env:
-  VERSION: 0.0.0-ci.${{ github.run_number }}
-  IMAGE_VERSION: 0.0.0-ci-${{ github.run_number }}-${{ github.sha }}
+  # A tag is a release (v1.4.0 -> package 1.4.0); a merge to main is a pre-release build.
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
+  IMAGE_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci-{0}-{1}', github.run_number, github.sha) }}
   RUN_ID: ${{ github.run_number }}
 
 jobs:
@@ -147,6 +149,54 @@ jobs:
             out/*.nupkg
             out/sbom.spdx.json
 
+  manifest:
+    name: release manifest
+    runs-on: ubuntu-latest
+    needs: [build-image, publish]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the manifest that promotion reads
+        run: |
+          set -euo pipefail
+          python3 - <<'PYJSON'
+          import json, os
+          m = {
+            "version": os.environ["VERSION"],
+            "image": os.environ["IMAGE"],
+            "package": "WinBuild.SampleApp",
+            "package_version": os.environ["VERSION"],
+            "package_sha256": os.environ["SHA256"],
+            "commit": os.environ["GITHUB_SHA"],
+            "built_by_run": os.environ["RUN_ID"],
+            "repository": os.environ["GITHUB_REPOSITORY"],
+            "workflow": os.environ["GITHUB_WORKFLOW"],
+          }
+          json.dump(m, open("release-manifest.json", "w"), indent=2)
+          print(json.dumps(m, indent=2))
+          PYJSON
+        env:
+          VERSION: ${{ env.VERSION }}
+          IMAGE: ${{ needs.build-image.outputs.image }}
+          SHA256: ${{ needs.publish.outputs.sha256 }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: release-manifest.json
+      - name: Fetch the package so the release carries the exact bytes
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: out
+      - name: Attach manifest and package to the release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-manifest.json
+            out/*.nupkg
+          generate_release_notes: true
+
   stage-artifact:
     name: stage the exact bytes for the nodes
     runs-on: ubuntu-latest
@@ -179,6 +229,7 @@ jobs:
           echo "url=$gs" >> "$GITHUB_OUTPUT"
 
   deploy:
+    environment: gcp-test
     name: deploy two nodes + load balancer
     runs-on: ubuntu-latest
     needs: [build-image, publish, stage-artifact]
@@ -217,6 +268,7 @@ jobs:
           echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
 
   verify:
+    environment: gcp-test
     name: verify through the load balancer
     runs-on: ubuntu-latest
     needs: deploy
@@ -245,6 +297,7 @@ jobs:
           bash scripts/verify-through-lb.sh "${{ needs.deploy.outputs.lb_ip }}"
 
   debug-access:
+    environment: gcp-test
     name: troubleshooting access (opt-in)
     runs-on: ubuntu-latest
     needs: build-image
@@ -288,6 +341,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   destroy:
+    environment: gcp-test
     name: destroy everything (always)
     runs-on: ubuntu-latest
     needs: [deploy, verify]

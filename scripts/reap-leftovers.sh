@@ -15,6 +15,7 @@ gcloud compute instances list --project "$PROJECT_ID" \
   --format="csv[no-heading](name,zone.basename(),creationTimestamp,labels.ttl)" |
 while IFS=, read -r name zone created ttl; do
   [ -n "${name:-}" ] || continue
+  if [ "${ttl:-}" = "none" ]; then echo "skipping $name ($zone): ttl=none (persistent environment)"; continue; fi
   case "${ttl:-}" in
     *h) hours="${ttl%h}"; hours="${hours#debug-}" ;;
     *)  hours=2 ;;

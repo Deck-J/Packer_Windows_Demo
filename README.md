@@ -13,6 +13,10 @@ One green run of `.github/workflows/pipeline.yml` does this, on a standard `ubun
 6. **`terraform destroy`** runs whatever happened before, followed by **`scripts/assert-empty-project.sh`**,
    which asks GCP what exists instead of trusting state.
 
+A tag (`v1.4.0`) produces a release instead: release-named image and package, a `release-manifest.json`
+attached to the GitHub Release, and a separate **`promote.yml`** that deploys those exact digests to the
+persistent environment behind the `gcp-prod` approval gate — no rebuild, no teardown.
+
 The design and its trade-offs: [`docs/PLAN.md`](docs/PLAN.md). Decisions: [`docs/adr/`](docs/adr/).
 
 ## Layout

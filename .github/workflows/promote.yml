@@ -1,0 +1,116 @@
+name: promote
+
+# Deploy a tagged release to the persistent environment.
+#
+# This is the approval gate the merge-to-main pipeline deliberately does not have: merging builds and
+# verifies in an ephemeral test environment, and promoting takes a human. The job runs in the `gcp-prod`
+# environment, which must be configured with required reviewers — that is the control, not a comment in
+# a doc.
+#
+# What it deploys is what was tested: the image name and the package sha256 come from the release
+# manifest attached to the tag, and the package bytes come from the same release. Nothing is rebuilt.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to promote (e.g. v1.4.0)"
+        required: true
+      confirm:
+        description: "Type PROMOTE to confirm"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: promote-prod
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: inputs.confirm == 'PROMOTE'
+    runs-on: ubuntu-latest
+    environment: gcp-prod        # required reviewers belong here, in repository settings
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Read the release manifest and fetch the exact bytes
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --pattern 'release-manifest.json' --clobber
+          gh release download "$TAG" --pattern '*.nupkg' --clobber
+          cat release-manifest.json
+          pkg=$(ls *.nupkg | head -1)
+          image=$(jq -r '.image' release-manifest.json)
+          version=$(jq -r '.version' release-manifest.json)
+          expected=$(jq -r '.package_sha256' release-manifest.json)
+          actual=$(sha256sum "$pkg" | cut -d' ' -f1)
+          [ "$expected" = "$actual" ] || { echo "::error::release package does not match its manifest"; exit 1; }
+          {
+            echo "image=$image"
+            echo "version=$version"
+            echo "sha256=$actual"
+            echo "nupkg=$pkg"
+          } >> "$GITHUB_OUTPUT"
+          echo "verified: $pkg sha256 matches the manifest"
+
+      - name: Stage the package for the nodes
+        id: stage
+        run: |
+          set -euo pipefail
+          gs="gs://${{ vars.ARTIFACT_BUCKET }}/prod/${{ inputs.tag }}/${{ steps.rel.outputs.nupkg }}"
+          gcloud storage cp "${{ steps.rel.outputs.nupkg }}" "$gs"
+          echo "url=$gs" >> "$GITHUB_OUTPUT"
+
+      - name: terraform apply for the persistent environment
+        id: tf
+        env:
+          TF_IN_AUTOMATION: "1"
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra init -input=false -backend-config="bucket=${{ vars.STATE_BUCKET }}"
+          terraform -chdir=infra apply -auto-approve -input=false \
+            -var="project_id=${{ vars.GCP_PROJECT }}" -var="region=${{ vars.GCP_REGION }}" \
+            -var="zone_a=${{ vars.GCP_ZONE }}" -var="image=${{ steps.rel.outputs.image }}" \
+            -var="node_service_account=${{ vars.NODE_SA }}" \
+            -var="app_version=${{ steps.rel.outputs.version }}" \
+            -var="package_url=${{ steps.stage.outputs.url }}" \
+            -var="package_sha256=${{ steps.rel.outputs.sha256 }}" \
+            -var="run_id=prod" -var="ttl=none"
+          echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify through the load balancer (same suite as the test run)
+        run: |
+          pwsh -NoProfile -File ./custom/tests/run-tests.ps1 \
+            -Phase deploy -BaseUrl "http://${{ steps.tf.outputs.lb_ip }}" \
+            -ExpectedVersion "${{ steps.rel.outputs.version }}" -SkipUnitTests
+
+      - name: Record the promotion
+        run: |
+          {
+            echo "### Promoted ${{ inputs.tag }} to production"
+            echo "- image: \`${{ steps.rel.outputs.image }}\`"
+            echo "- package: \`${{ steps.rel.outputs.nupkg }}\` sha256 \`${{ steps.rel.outputs.sha256 }}\`"
+            echo "- LB: \`${{ steps.tf.outputs.lb_ip }}\`"
+            echo "- resources labelled ttl=none: the reaper will not touch them"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # No teardown here, by design: this environment is meant to persist. Shipping a change to it is a
+      # separate, reviewed terraform apply.

@@ -75,6 +75,35 @@ If the build **succeeded** there is no surviving machine — create one from the
 
 Cleanup is not your job: the instance is labelled `ttl=debug-<n>h` and `reaper.yml` deletes it on schedule.
 
+## 3d. Environments, approval and promotion
+
+Three levels, all enforced by GitHub rather than by convention:
+
+| level | how it is triggered | guard |
+|---|---|---|
+| PR | `pr-checks` on every pull request | must pass before merge; branch protection requires it |
+| test (ephemeral) | merge to `main` runs `pipeline` | jobs run in the **gcp-test** environment; everything is destroyed afterwards |
+| production (persistent) | `promote` workflow, tag input + typed `PROMOTE` | runs in the **gcp-prod** environment, which requires reviewers in repository settings |
+
+Set this up once, in Settings → Environments:
+
+1. **`gcp-test`** — no reviewers, no wait timer. It exists so test deploys are labelled and auditable, and
+   so a future rule (a wait timer, a branch policy) has somewhere to attach.
+2. **`gcp-prod`** — **Required reviewers** (yourself, and anyone else who should be able to release),
+   optionally a wait timer. Do not add a deployment branch rule: promotion runs from a tag.
+3. **Settings → Actions → General** — leave "Allow GitHub Actions to create and approve pull requests"
+   **off**; nothing here needs it.
+
+Promotion deploys exactly what was tested: the image name and the package sha256 come from the
+`release-manifest.json` attached to the tag, the `.nupkg` is downloaded from the same release and re-hashed
+before use, and nothing is rebuilt. Resources are labelled `ttl=none`, so the reaper leaves them alone, and
+`promote` has no teardown job by design.
+
+```bash
+git tag -a v1.4.0 -m "1.4.0" && git push origin v1.4.0     # builds a release-named image + package
+gh workflow run promote.yml -f tag=v1.4.0 -f confirm=PROMOTE  # waits for the gcp-prod approval
+```
+
 ## 4. Cheap recovery
 
 ```bash

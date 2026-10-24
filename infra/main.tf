@@ -3,7 +3,7 @@ locals {
     owner   = "winbuild-ci"
     run     = var.run_id
     version = replace(var.app_version, ".", "-")
-    ttl     = "2h"
+    ttl     = var.ttl
   }
   image_self_link = var.image != "" ? var.image : "projects/${var.project_id}/global/images/family/${var.image_family}"
 }
