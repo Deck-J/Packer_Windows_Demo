@@ -291,7 +291,7 @@ jobs:
           bash scripts/phase.sh start 6 "Deploy nodes"
 
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.9.8"
       - uses: google-github-actions/auth@v2
@@ -445,7 +445,7 @@ jobs:
           echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
           bash scripts/phase.sh start 8 "Teardown — destroy everything"
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.9.8"
       - uses: google-github-actions/auth@v2
