@@ -64,14 +64,15 @@ jobs:
           gcloud storage cp source.zip "gs://${{ vars.BUILD_BUCKET }}/source/${{ github.sha }}.zip"
           echo "url=gs://${{ vars.BUILD_BUCKET }}/source/${{ github.sha }}.zip" >> "$GITHUB_OUTPUT"
 
-      - name: Cloud Build (Packer → Windows image)
+      - name: Cloud Build (Packer → Windows image), streamed
         if: ${{ !inputs.skip_image_build }}
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
         run: |
           set -euo pipefail
-          gcloud builds submit --config cloudbuild/image.yaml \
-            --substitutions="_IMAGE_VERSION=${IMAGE_VERSION},_APP_VERSION=${VERSION},_SOURCE_URL=${{ steps.src.outputs.url }},_BUILDER_SA=${{ vars.BUILDER_SA }},_ZONE=${{ vars.GCP_ZONE }},_DEBUG_KEEP_VM=${{ inputs.debug_keep_vm || 'false' }},_VS_EDITION=${{ vars.VS_EDITION || 'enterprise' }},_VS_WORKLOADS=${{ vars.VS_WORKLOADS || '' }},_VS_DISABLE_OUT_OF_PROC=${{ vars.VS_DISABLE_OUT_OF_PROC || 'true' }},_VS_EXTRA_VSIX=${{ vars.VS_EXTRA_VSIX || '' }}" \
-            --project "${{ vars.GCP_PROJECT }}" \
-            --async=false --format='value(id)'
+          bash scripts/stream-cloud-build.sh cloudbuild/image.yaml \
+            "_IMAGE_VERSION=${IMAGE_VERSION},_APP_VERSION=${VERSION},_SOURCE_URL=${{ steps.src.outputs.url }},_BUILDER_SA=${{ vars.BUILDER_SA }},_ZONE=${{ vars.GCP_ZONE }},_DEBUG_KEEP_VM=${{ inputs.debug_keep_vm || 'false' }},_VS_EDITION=${{ vars.VS_EDITION || 'enterprise' }},_VS_WORKLOADS=${{ vars.VS_WORKLOADS || '' }},_VS_DISABLE_OUT_OF_PROC=${{ vars.VS_DISABLE_OUT_OF_PROC || 'true' }},_VS_EXTRA_VSIX=${{ vars.VS_EXTRA_VSIX || '' }}" \
+            "${{ vars.GCP_PROJECT }}"'
 
       - name: Resolve the image
         id: out
@@ -255,6 +256,7 @@ jobs:
           TF_IN_AUTOMATION: "1"
         run: |
           set -euo pipefail
+          echo "::group::terraform apply (${{ env.IMAGE_VERSION }})"
           terraform -chdir=infra apply -auto-approve -input=false \
             -var="project_id=${{ vars.GCP_PROJECT }}" \
             -var="region=${{ vars.GCP_REGION }}" \
@@ -271,6 +273,7 @@ jobs:
             -var="otel_endpoint=${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}" \
             -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'true' }}"
           echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
 
   verify:
     environment: gcp-test

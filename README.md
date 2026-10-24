@@ -54,6 +54,12 @@ nothing is installed — the pipeline costs nothing until you opt in, and the **
 dry-run**: it proves the metadata and Secret Manager path and skips the download. Setup and caveats:
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §3e.
 
+## Watching a run
+
+The image build is streamed into the Actions log live (`scripts/stream-cloud-build.sh`): a group per Cloud
+Build step, notices for milestones, highlights on the MSBuild and devenv demo builds, and a verdict read back
+from the build status rather than inferred from the log. See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) §2.
+
 ## Proving it can build with the IDE
 
 `custom/scripts/25-devenv-build.ps1` builds the solution with `devenv.com` and asserts the artefact, so "this

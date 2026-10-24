@@ -14,7 +14,23 @@
    key) and must print the deployer service account.
 6. **Branch protection** — require PR, require review, require the `pr-checks` jobs, linear history.
 
-## 2. A normal run
+## 2. A normal run, and what you see while it runs
+
+The `build-image` job does not fire-and-wait: `scripts/stream-cloud-build.sh` submits the build asynchronously
+and streams its log into the Actions log as it happens, annotating the lines that matter.
+
+- a collapsible **group per Cloud Build step**
+- `::notice::` milestones: build submitted (with the console URL and elapsed time), image creation, build result
+- `::notice::` lines for the demo builds, so `msbuild-demo` and `devenv-build` are visible as they run
+- `::warning::` on lines containing errors, and on stream failures
+- a final verdict from `gcloud builds describe` — the stream ending is not the same as the build succeeding, so it
+  polls the build status and fails the job on `FAILURE`, `TIMEOUT`, `CANCELLED` or a stuck build
+
+The Windows-side progress comes through the same stream: Packer prints each provisioner's output, and our
+scripts log `msbuild: <path>`, `devenv: <path>`, `[step] starting/failed` lines, which the streamer highlights.
+Clicking the console URL gives the same log with Cloud Build's own grouping if you prefer that view.
+
+## 2b. A normal run
 
 Merge to `main` (or dispatch `pipeline`). Expect ~55–75 minutes end to end, most of it the Build Tools
 install inside the image build. The run summary carries: image name, package version + sha256, LB IP,
