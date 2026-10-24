@@ -10,6 +10,9 @@
 | Egress for the test (a few MB) | $0.12/GB | <$0.01 | $0 |
 | **Total** | | **≈ $0.25 per run** | **≈ $0.75** |
 
+A Dynatrace **free trial** (no card, 15 days) covers a test tenant; the **Playground** is free but shared and
+cannot accept an agent install. `DYNATRACE_DRY_RUN=true` exercises the wiring with no tenant at all.
+
 Monitoring adds no GCP cost. Dynatrace licensing is per host (host units), and ephemeral test nodes each
 register as a host even for 20 minutes: if you enable the agent on the test pipeline, expect a handful of
 short-lived hosts per day, which is why the host group is `winbuild-test` and separate from production.

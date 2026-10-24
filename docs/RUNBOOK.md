@@ -134,6 +134,19 @@ with its own service account, downloads the OneAgent MSI for that tenant, instal
 `C:\app\status.json`, and deletes the MSI. If the tenant metadata is empty the step is skipped; if the
 token cannot be read the node fails loudly rather than half-installing.
 
+### Getting a tenant for a test
+
+- **Dynatrace Playground** (`dynatrace.com/signup/playground`) — free, instant, pre-loaded with sample data.
+  Good for seeing what the dashboards should look like. It is a shared demo tenant and **you cannot install
+  an agent into it**, so it does not exercise this pipeline.
+- **Free trial** (`dynatrace.com/signup`) — no credit card, 15 days, your own tenant (`<env>.live.dynatrace.com`)
+  with a PaaS token you can create yourself. This is the one that works for testing the install.
+  It expires, the tenant is deleted, and after that the pipeline fails at the agent step — which is why
+  `DYNATRACE_TENANT` is unset by default rather than something you have to remember to remove.
+- **No tenant at all** — set `DYNATRACE_DRY_RUN=true`. The node then reads the metadata, fetches the token
+  from Secret Manager, records that the secret was readable, and stops before downloading anything. That
+  proves the plumbing (metadata → secret → permissions) without a tenant, and is what to use in CI.
+
 Things worth knowing before you turn it on:
 
 - **Unset `DYNATRACE_TENANT` = no agent.** That is the default, so the pipeline costs nothing until you opt in.

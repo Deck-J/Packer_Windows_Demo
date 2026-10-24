@@ -96,7 +96,8 @@ jobs:
             -var="run_id=prod" -var="ttl=none" \
             -var="dynatrace_tenant=${{ vars.DYNATRACE_TENANT }}" \
             -var="dynatrace_host_group=${{ vars.DYNATRACE_HOST_GROUP || 'winbuild-prod' }}" \
-            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}"
+            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}" \
+            -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'false' }}"
           echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
 
       - name: Verify through the load balancer (same suite as the test run)

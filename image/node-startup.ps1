@@ -52,6 +52,13 @@ function Install-Dynatrace {
         throw "cannot read Dynatrace token secret '$secretName' (the node service account needs secretAccessor)"
     }
 
+    $dryRun = $false
+    try { $dryRun = ((Get-Meta 'dynatrace-dry-run') -eq 'true') } catch { }
+    if ($dryRun) {
+        Set-Status 'dynatrace' "dry run: tenant $tenant, secret readable, install skipped"
+        return
+    }
+
     $msi = 'C:\app\oneagent.msi'
     $url = "https://$tenant.live.dynatrace.com/api/v1/deployment/installer/agent/windows/default/latest?arch=x86&flavor=default"
     Invoke-WebRequest -Uri $url -Headers @{ Authorization = "Api-Token $token" } -OutFile $msi -UseBasicParsing

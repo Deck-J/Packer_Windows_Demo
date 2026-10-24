@@ -267,7 +267,8 @@ jobs:
             -var="run_id=${RUN_ID}" \
             -var="dynatrace_tenant=${{ vars.DYNATRACE_TENANT }}" \
             -var="dynatrace_host_group=${{ vars.DYNATRACE_HOST_GROUP || 'winbuild-test' }}" \
-            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}"
+            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}" \
+            -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'false' }}"
           echo "lb_ip=$(terraform -chdir=infra output -raw lb_ip)" >> "$GITHUB_OUTPUT"
 
   verify:
@@ -370,7 +371,8 @@ jobs:
             -var="package_url=unused" -var="package_sha256=unused" -var="run_id=${RUN_ID}" \
             -var="dynatrace_tenant=${{ vars.DYNATRACE_TENANT }}" \
             -var="dynatrace_host_group=${{ vars.DYNATRACE_HOST_GROUP || 'winbuild-test' }}" \
-            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}"
+            -var="dynatrace_token_secret=${{ vars.DYNATRACE_TOKEN_SECRET }}" \
+            -var="dynatrace_dry_run=${{ vars.DYNATRACE_DRY_RUN || 'false' }}"
 
   audit:
     name: prove nothing is left billing

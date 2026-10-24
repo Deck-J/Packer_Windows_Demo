@@ -76,6 +76,12 @@ variable "dynatrace_token_secret" {
   description = "Secret Manager secret holding a Dynatrace PaaS token. The node service account reads it; the token is never in metadata, the image or the repo."
 }
 
+variable "dynatrace_dry_run" {
+  type        = bool
+  default     = false
+  description = "Prove metadata and Secret Manager access without downloading or installing the agent. For testing the plumbing without a tenant."
+}
+
 variable "network_name" {
   type    = string
   default = "wb-net"
