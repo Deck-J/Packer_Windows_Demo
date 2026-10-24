@@ -10,9 +10,9 @@ crash.log
 packer/manifest.json
 packer/*.log
 
-# .NET
-bin/
-obj/
+# .NET build output — scoped to the projects, because this repo has its own bin/ tooling that must be tracked
+src/**/bin/
+src/**/obj/
 TestResults/
 *.trx
 *.user
