@@ -1,0 +1,105 @@
+# Basic, runnable version of the Enterprise Build workflow. Same shape - restore, build, test, pack, publish - but
+# against example/Enterprise.Product.sln, which actually exists in this repo, so the pipeline can be proven end to end
+# before it is pointed at the real product solution.
+#
+# Differences from the enterprise one, and why:
+#   * no MSBuild+devenv fallback: this solution is SDK-style and builds cleanly with dotnet build. Add the fallback only
+#     when a legacy .vcxproj/.csproj actually needs it - dead fallback paths are untested paths.
+#   * Nexus is conditional: if NEXUS_URL is unset the step is skipped instead of failing on a missing secret, so a fork
+#     or a fresh clone still gets a green build.
+#   * tests run with `dotnet test` because these are SDK-style net9.0 projects (the enterprise note about needing
+#     vstest.console applies to .NET Framework test assemblies, not these).
+name: Example Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: example-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: example
+    env:
+      CONFIGURATION: Release
+      SOLUTION: Enterprise.Product.sln
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Show toolchain
+        run: dotnet --info
+
+      - name: Configure Nexus (skipped when the secret is absent)
+        if: ${{ env.NEXUS_URL != '' }}
+        shell: pwsh
+        env:
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          @"
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="Nexus" value="$env:NEXUS_URL/repository/nuget-hosted/" />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+            <packageSourceCredentials>
+              <Nexus>
+                <add key="Username" value="$env:NEXUS_USERNAME" />
+                <add key="ClearTextPassword" value="$env:NEXUS_PASSWORD" />
+              </Nexus>
+            </packageSourceCredentials>
+          </configuration>
+          "@ | Set-Content -Path nuget.config -Encoding UTF8
+          dotnet nuget list source
+
+      - name: Restore
+        run: dotnet restore $env:SOLUTION
+
+      - name: Build
+        run: dotnet build $env:SOLUTION --configuration $env:CONFIGURATION --no-restore
+
+      - name: Test
+        run: dotnet test $env:SOLUTION --configuration $env:CONFIGURATION --no-build --logger "trx;LogFileName=results.trx"
+
+      - name: Pack
+        run: dotnet pack src\Enterprise.Product.Core\Enterprise.Product.Core.csproj --configuration $env:CONFIGURATION --no-build --output artifacts
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: example-build-output
+          path: |
+            example/artifacts/**
+            example/tests/**/TestResults/**
+          if-no-files-found: warn
+
+      - name: Publish to Nexus (main only, and only if configured)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && env.NEXUS_URL != '' }}
+        shell: pwsh
+        env:
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          Get-ChildItem artifacts\*.nupkg | ForEach-Object {
+            dotnet nuget push $_.FullName --source Nexus --api-key "$env:NEXUS_PASSWORD"
+            if ($LASTEXITCODE -ne 0) { throw "push failed for $($_.Name)" }
+          }
