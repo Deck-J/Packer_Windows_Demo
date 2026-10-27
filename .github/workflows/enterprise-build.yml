@@ -8,6 +8,7 @@ on:
 # Least privilege: this workflow only needs to read the repo.
 permissions:
   contents: read
+  packages: write
 
 # One build per ref; a new push cancels the stale one instead of burning a Windows runner.
 concurrency:
@@ -25,9 +26,8 @@ jobs:
     env:
       CONFIGURATION: Release
       SOLUTION: Enterprise.Product.sln
-      NEXUS_REPO: ${{ secrets.NEXUS_URL }}/repository/nuget-hosted/
-      NUGET_USER: ${{ secrets.NEXUS_USERNAME }}
-      NUGET_PASS: ${{ secrets.NEXUS_PASSWORD }}
+      GH_ACTOR: ${{ github.actor }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -42,28 +42,28 @@ jobs:
       # A repo-level nuget.config is what `nuget restore` and `dotnet restore` both resolve. Adding a *user-level*
       # source (dotnet nuget add source) writes to %APPDATA%\NuGet\NuGet.Config, which nuget restore may ignore
       # depending on the solution's own config - the classic "works on my machine" restore failure in CI.
-      - name: Configure Nexus (repo-scoped nuget.config)
+      - name: Configure GitHub Packages
         shell: pwsh
+        env:
+          GH_OWNER: ${{ github.repository_owner }}
         run: |
           @"
           <?xml version="1.0" encoding="utf-8"?>
           <configuration>
             <packageSources>
               <clear />
-              <add key="Nexus" value="$env:NEXUS_REPO" />
+              <add key="github" value="https://nuget.pkg.github.com/$env:GH_OWNER/index.json" />
               <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
             </packageSources>
             <packageSourceCredentials>
-              <Nexus>
-                <add key="Username" value="$env:NUGET_USER" />
-                <add key="ClearTextPassword" value="$env:NUGET_PASS" />
-              </Nexus>
+              <github>
+                <add key="Username" value="$env:GH_ACTOR" />
+                <add key="ClearTextPassword" value="$env:GH_TOKEN" />
+              </github>
             </packageSourceCredentials>
           </configuration>
           "@ | Set-Content -Path nuget.config -Encoding UTF8
-          # Prove the source is actually visible before spending the restore step on it.
           dotnet nuget list source
-
       - name: Restore
         run: dotnet restore $env:SOLUTION
 
@@ -144,12 +144,11 @@ jobs:
       # Publish only from a push to main - a PR from a fork must never be able to push to Nexus.
       # Credentials are passed as arguments, not a dummy api-key: a Nexus hosted repo rejects anonymous pushes unless
       # you have explicitly enabled that, and a "dummy" key silently relies on it.
-      - name: Publish Packages
+      - name: Publish Packages to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
           Get-ChildItem artifacts\*.nupkg | ForEach-Object {
-            dotnet nuget push $_.FullName --source Nexus `
-              --api-key "$env:NUGET_PASS" 2>&1 | Tee-Object -Variable out
+            dotnet nuget push $_.FullName --source github --api-key "$env:GH_TOKEN" --skip-duplicate
             if ($LASTEXITCODE -ne 0) { throw "push failed for $($_.Name)" }
           }

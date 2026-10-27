@@ -5,8 +5,9 @@
 # Differences from the enterprise one, and why:
 #   * no MSBuild+devenv fallback: this solution is SDK-style and builds cleanly with dotnet build. Add the fallback only
 #     when a legacy .vcxproj/.csproj actually needs it - dead fallback paths are untested paths.
-#   * Nexus is conditional: if NEXUS_URL is unset the step is skipped instead of failing on a missing secret, so a fork
-#     or a fresh clone still gets a green build.
+#   * packages use GitHub Packages instead of Nexus: one less service to run, no extra secrets to manage, and the
+#     auth is the workflow's own GITHUB_TOKEN. Needs `packages: write` and the repo setting "Workflow permissions ->
+#     Read and write" if the org default is read-only.
 #   * tests run with `dotnet test` because these are SDK-style net9.0 projects (the enterprise note about needing
 #     vstest.console applies to .NET Framework test assemblies, not these).
 name: Example Build
@@ -19,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  packages: write     # push packages to GitHub Packages
 
 concurrency:
   group: example-build-${{ github.ref }}
@@ -34,6 +36,8 @@ jobs:
     env:
       CONFIGURATION: Release
       SOLUTION: Enterprise.Product.sln
+      GH_ACTOR: ${{ github.actor }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,32 +49,28 @@ jobs:
       - name: Show toolchain
         run: dotnet --info
 
-      - name: Configure Nexus (skipped when the secret is absent)
-        if: ${{ env.NEXUS_URL != '' }}
+      - name: Configure GitHub Packages
         shell: pwsh
         env:
-          NEXUS_URL: ${{ secrets.NEXUS_URL }}
-          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          GH_OWNER: ${{ github.repository_owner }}
         run: |
           @"
           <?xml version="1.0" encoding="utf-8"?>
           <configuration>
             <packageSources>
               <clear />
-              <add key="Nexus" value="$env:NEXUS_URL/repository/nuget-hosted/" />
+              <add key="github" value="https://nuget.pkg.github.com/$env:GH_OWNER/index.json" />
               <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
             </packageSources>
             <packageSourceCredentials>
-              <Nexus>
-                <add key="Username" value="$env:NEXUS_USERNAME" />
-                <add key="ClearTextPassword" value="$env:NEXUS_PASSWORD" />
-              </Nexus>
+              <github>
+                <add key="Username" value="$env:GH_ACTOR" />
+                <add key="ClearTextPassword" value="$env:GH_TOKEN" />
+              </github>
             </packageSourceCredentials>
           </configuration>
           "@ | Set-Content -Path nuget.config -Encoding UTF8
           dotnet nuget list source
-
       - name: Restore
         run: dotnet restore $env:SOLUTION
 
@@ -92,14 +92,11 @@ jobs:
             example/tests/**/TestResults/**
           if-no-files-found: warn
 
-      - name: Publish to Nexus (main only, and only if configured)
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && env.NEXUS_URL != '' }}
+      - name: Publish to GitHub Packages (main only)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         shell: pwsh
-        env:
-          NEXUS_URL: ${{ secrets.NEXUS_URL }}
-          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
         run: |
           Get-ChildItem artifacts\*.nupkg | ForEach-Object {
-            dotnet nuget push $_.FullName --source Nexus --api-key "$env:NEXUS_PASSWORD"
+            dotnet nuget push $_.FullName --source github --api-key "$env:GH_TOKEN" --skip-duplicate
             if ($LASTEXITCODE -ne 0) { throw "push failed for $($_.Name)" }
           }
