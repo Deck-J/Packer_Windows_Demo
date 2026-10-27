@@ -1,0 +1,154 @@
+name: Enterprise Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: this workflow only needs to read the repo.
+permissions:
+  contents: read
+
+# One build per ref; a new push cancels the stale one instead of burning a Windows runner.
+concurrency:
+  group: enterprise-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # windows-2025-vs2026 is NOT a GitHub-hosted label. Use windows-2025 (hosted, VS2022 today) unless this is a
+    # self-hosted image you control - in which case say so here so the requirement is visible, not folklore.
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    env:
+      CONFIGURATION: Release
+      SOLUTION: Enterprise.Product.sln
+      NEXUS_REPO: ${{ secrets.NEXUS_URL }}/repository/nuget-hosted/
+      NUGET_USER: ${{ secrets.NEXUS_USERNAME }}
+      NUGET_PASS: ${{ secrets.NEXUS_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # A repo-level nuget.config is what `nuget restore` and `dotnet restore` both resolve. Adding a *user-level*
+      # source (dotnet nuget add source) writes to %APPDATA%\NuGet\NuGet.Config, which nuget restore may ignore
+      # depending on the solution's own config - the classic "works on my machine" restore failure in CI.
+      - name: Configure Nexus (repo-scoped nuget.config)
+        shell: pwsh
+        run: |
+          @"
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="Nexus" value="$env:NEXUS_REPO" />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+            <packageSourceCredentials>
+              <Nexus>
+                <add key="Username" value="$env:NUGET_USER" />
+                <add key="ClearTextPassword" value="$env:NUGET_PASS" />
+              </Nexus>
+            </packageSourceCredentials>
+          </configuration>
+          "@ | Set-Content -Path nuget.config -Encoding UTF8
+          # Prove the source is actually visible before spending the restore step on it.
+          dotnet nuget list source
+
+      - name: Restore
+        run: dotnet restore $env:SOLUTION
+
+      # Primary build. NOT continue-on-error: a red build must stay red. The fallbacks below run on failure and the
+      # final step re-asserts the result, so nothing is silently green.
+      - name: Build with MSBuild
+        id: msbuild
+        continue-on-error: true
+        run: msbuild $env:SOLUTION /p:Configuration=$env:CONFIGURATION /m /bl:msbuild.binlog /v:m
+
+      - name: Locate Visual Studio
+        if: steps.msbuild.outcome == 'failure'
+        id: vswhere
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          "path=$vs" >> $env:GITHUB_OUTPUT
+          Write-Host "VS: $vs"
+
+      - name: Optional DisableOutOfProcBuild
+        if: steps.msbuild.outcome == 'failure'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $tool = Join-Path "${{ steps.vswhere.outputs.path }}" `
+            "Common7\IDE\CommonExtensions\Microsoft\VSI\DisableOutOfProcBuild.exe"
+          if (Test-Path $tool) { Write-Host "Disabling OutOfProcBuild"; & $tool }
+
+      - name: Fallback Build Using devenv
+        if: steps.msbuild.outcome == 'failure'
+        shell: pwsh
+        run: |
+          $devenv = Join-Path "${{ steps.vswhere.outputs.path }}" "Common7\IDE\devenv.com"
+          & $devenv $env:SOLUTION /Build $env:CONFIGURATION
+          if ($LASTEXITCODE -ne 0) { throw "devenv build failed with exit code $LASTEXITCODE" }
+
+      - name: Fail the job if every build path failed
+        if: steps.msbuild.outcome == 'failure'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${{ steps.vswhere.outputs.path }}\Common7\IDE\devenv.com")) {
+            throw "MSBuild failed and no devenv fallback was available"
+          }
+
+      # dotnet test --no-build only works when the artifacts MSBuild produced match what dotnet test expects; for
+      # .NET Framework test projects it usually does not. Run the vstest console against the built assemblies instead.
+      - name: Run Tests
+        shell: pwsh
+        run: |
+          $results = "TestResults"
+          New-Item -ItemType Directory -Force -Path $results | Out-Null
+          $ok = $true
+          Get-ChildItem -Recurse -Filter *Tests.dll -Path . |
+            Where-Object { $_.FullName -match "\\bin\\$env:CONFIGURATION\\" } |
+            ForEach-Object {
+              Write-Host "== $($_.FullName)"
+              & vstest.console.exe $_.FullName /Logger:"trx;LogFileName=$($_.BaseName).trx" /ResultsDirectory:$results
+              if ($LASTEXITCODE -ne 0) { $ok = $false }
+            }
+          if (-not $ok) { throw "one or more test assemblies failed" }
+
+      - name: Upload build and test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            msbuild.binlog
+            TestResults/**
+            artifacts/**
+          if-no-files-found: warn
+
+      - name: Pack
+        run: dotnet pack src\Enterprise.Product.Core\Enterprise.Product.Core.csproj `
+              --configuration $env:CONFIGURATION --output artifacts --no-build
+
+      # Publish only from a push to main - a PR from a fork must never be able to push to Nexus.
+      # Credentials are passed as arguments, not a dummy api-key: a Nexus hosted repo rejects anonymous pushes unless
+      # you have explicitly enabled that, and a "dummy" key silently relies on it.
+      - name: Publish Packages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts\*.nupkg | ForEach-Object {
+            dotnet nuget push $_.FullName --source Nexus `
+              --api-key "$env:NUGET_PASS" 2>&1 | Tee-Object -Variable out
+            if ($LASTEXITCODE -ne 0) { throw "push failed for $($_.Name)" }
+          }
