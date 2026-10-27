@@ -16,9 +16,10 @@ concurrency:
 
 jobs:
   build:
-    # windows-2025-vs2026 is NOT a GitHub-hosted label. Use windows-2025 (hosted, VS2022 today) unless this is a
-    # self-hosted image you control - in which case say so here so the requirement is visible, not folklore.
-    runs-on: windows-2025
+    # Windows Server 2025 with Visual Studio 2026 - a real GitHub-hosted image label (GA per actions/runner-images
+    # #14016), not a self-hosted tag. Pinned rather than windows-latest so a runner-image rollover cannot change the
+    # toolset under an enterprise build.
+    runs-on: windows-2025-vs2026
     timeout-minutes: 45
 
     env:
